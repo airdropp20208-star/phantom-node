@@ -3,6 +3,9 @@ name: Phantom Node v4.0
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 env:
   DS_EMAIL: ${{ secrets.DS_EMAIL }}
   DS_PASSWORD: ${{ secrets.DS_PASSWORD }}
@@ -22,25 +25,57 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
+          
+          # RDP
           iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+          
+          # SSH
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 2>$null
           Start-Service sshd
           Set-Service -Name sshd -StartupType Automatic
           $sshd = "$env:ProgramData\ssh\sshd_config"
           (Get-Content $sshd) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshd
           Restart-Service sshd
+          
+          # Cloudflared - run and capture output
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
-          Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -WindowStyle Hidden
+          $proc = Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -NoNewWindow -PassThru -RedirectStandardError "C:\cf-err.log" -RedirectStandardOutput "C:\cf-out.log"
           Start-Sleep -Seconds 20
+          
+          # Extract tunnel URL from cloudflared stderr
           $tunnelUrl = ""
-          Get-ChildItem -Path "C:\Users\*\*.log" -Recurse -EA SilentlyContinue | ForEach-Object {
-              $m = Get-Content $_.FullName -EA SilentlyContinue | Select-String "https://.*trycloudflare\.com"
-              if ($m) { $tunnelUrl = $m.Matches[0].Value }
+          $errContent = Get-Content "C:\cf-err.log" -EA SilentlyContinue
+          $outContent = Get-Content "C:\cf-out.log" -EA SilentlyContinue
+          $allContent = ($errContent + $outContent) -join "`n"
+          $match = $allContent | Select-String "https://.*trycloudflare\.com"
+          if ($match) { $tunnelUrl = $match.Matches[0].Value }
+          
+          # If not found, try scanning all cloudflared logs
+          if (-not $tunnelUrl) {
+              Get-ChildItem -Path "C:\Users\*" -Recurse -Filter "*.log" -EA SilentlyContinue | ForEach-Object {
+                  $m = Get-Content $_.FullName -EA SilentlyContinue | Select-String "trycloudflare\.com"
+                  if ($m) { $tunnelUrl = "https://" + ($m.Matches[0].Value -replace "https://","") }
+              }
           }
+          
+          # If still not found, scan cloudflared config/data dirs
+          if (-not $tunnelUrl) {
+              @("C:\Users\*\AppData\Local\cloudflared", "C:\Users\*\.cloudflared") | ForEach-Object {
+                  Get-ChildItem -Path $_ -Recurse -EA SilentlyContinue | ForEach-Object {
+                      $m = Get-Content $_.FullName -EA SilentlyContinue | Select-String "trycloudflare\.com"
+                      if ($m) { $tunnelUrl = $m.Matches[0].Value }
+                  }
+              }
+          }
+          
           Write-Host "TUNNEL: $tunnelUrl" -ForegroundColor Green
+          Write-Host "CF-ERR: $(Get-Content 'C:\cf-err.log' -EA SilentlyContinue | Select-Object -First 5)" -ForegroundColor Yellow
+          
+          # Node + ds2api
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Continue"
+          
           $dir = "C:\ds2api"
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
           $ds2apiExe = ""
@@ -54,35 +89,35 @@ jobs:
                   Start-Process -FilePath $ds2apiExe -WorkingDirectory $dir -WindowStyle Hidden
               }
           } catch {}
+          
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
+          
+          # Push CONNECTION.md
           $ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -TimeoutSec 10).Content
-          $lines = @()
-          $lines += "# Phantom Node VPS - Connection Info"
-          $lines += "Updated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
-          $lines += ""
-          $lines += "## SSH Tunnel"
-          $lines += "URL: $tunnelUrl"
-          $lines += "User: appveyor"
-          $lines += "Pass: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I="
-          $lines += ""
-          $lines += "## RDP"
-          $lines += "Server: ${ip}:3389"
-          $lines += "User: appveyor"
-          $lines += "Pass: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I="
-          $lines += ""
-          $lines += "## Connect"
-          $lines += "ssh appveyor@$($tunnelUrl -replace 'https://','')"
-          $lines += ""
-          $lines += "## Services"
-          $lines += "ds2api: $(if ($ds2apiExe) { 'OK' } else { 'NOT INSTALLED' })"
-          $lines += "deepseek: OK"
-          $lines | Set-Content -Path "CONNECTION.md" -Encoding UTF8
+          $conn = @()
+          $conn += "# Phantom Node VPS"
+          $conn += "Updated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
+          $conn += ""
+          $conn += "## SSH Tunnel"
+          $conn += "URL: $tunnelUrl"
+          $conn += "User: appveyor"
+          $conn += "Pass: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I="
+          $conn += ""
+          $conn += "## RDP"
+          $conn += "Server: ${ip}:3389"
+          $conn += "User: appveyor"
+          $conn += "Pass: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I="
+          $conn += ""
+          $conn += "## ds2api: $(if ($ds2apiExe) { 'OK' } else { 'NOT INSTALLED' })"
+          $conn | Set-Content -Path "CONNECTION.md" -Encoding UTF8
+          
           git config user.email "phantom@node"
           git config user.name "Phantom Node"
           git add CONNECTION.md
-          git commit -m "Connection info $(Get-Date -Format 'HH:mm:ss')" -m "[skip ci]"
+          git commit -m "conn $(Get-Date -Format 'HH:mm:ss')" -m "[skip ci]"
           git push
+          
           echo "DS2API=$ds2apiExe" >> $env:GITHUB_OUTPUT
 
       - name: Monitor
