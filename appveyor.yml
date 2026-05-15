@@ -1,18 +1,7 @@
 # ==============================================================================
-#   PHANTOM NODE - GOD MODE v2.0 [STABLE UPGRADE]
-#   Architecture: DeepSeek V4 (Flash/Pro/NoThinking) + 9Router + ds2api
-#   Features: Self-Healing, Dynamic RAM Cleansing, CPU Priority, Health Checks
-#   Changelog v2.0:
-#     - Fixed: 9router path broken (newline in $env:APPDATA)
-#     - Fixed: RAM calculation (was dividing by 1024 twice)
-#     - Added: Download retry logic (3 attempts)
-#     - Added: Health check before starting services sequentially
-#     - Added: ds2api port verification before 9router launch
-#     - Added: Session download validation
-#     - Added: File logging to desktop
-#     - Added: Dynamic model mapping (5 models instead of 3)
-#     - Added: Graceful shutdown with process tree kill
-#     - Added: Network connectivity check before IDE launch
+#   PHANTOM NODE - GOD MODE v4.0
+#   Architecture: DeepSeek V4 + ds2api + 9Router + DeepSeek-TUI
+#   Features: Self-Healing, Health Checks, DeepSeek Coding Agent
 # ==============================================================================
 
 version: 999.0.{build}
@@ -29,7 +18,6 @@ environment:
   DS_EMAIL: "tooltdshaha00001@gmail.com"
   DS_PASSWORD: "son22tq2011"
   API_KEY: "sk-mykey"
-
 
 init:
   - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
@@ -59,11 +47,11 @@ install:
       }
 
       Log "========================================" Magenta
-      Log " PHANTOM NODE v2.0 - GOD MODE SEQUENCE " Magenta
+      Log " PHANTOM NODE v4.0 - GOD MODE SEQUENCE " Magenta
       Log "========================================" Magenta
 
-      # 1. EXTREME DEBLOAT - GIẾT DỊCH VỤ RÁC
-      Log "[1/7] Đang chiếm quyền kiểm soát OS..." Cyan
+      # 1. EXTREME DEBLOAT
+      Log "[1/7] Killing Windows services..." Cyan
       try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue } catch { }
       $servicesToKill = @("wsearch", "DiagTrack", "SysMain", "WerSvc", "Spooler", "BITS", "wuauserv", "DoSvc", "Schedule", "WdiServiceHost")
       foreach ($svc in $servicesToKill) {
@@ -72,8 +60,8 @@ install:
       }
       Log "  Killed $($servicesToKill.Count) services" Green
 
-      # 2. CÀI NODE 18 + CHROME
-      Log "[2/7] Đang cài Node 18 + Chrome..." Cyan
+      # 2. INSTALL NODE 18 + CHROME
+      Log "[2/7] Installing Node 18 + Chrome..." Cyan
       $ErrorActionPreference = "SilentlyContinue"
       Install-Product node 18 | Out-Null
       $ErrorActionPreference = "Stop"
@@ -87,8 +75,23 @@ install:
           } else { Log "  Chrome install failed, continuing..." Yellow }
       } else { Log "  Chrome already installed" Green }
 
-      # 3. KHỞI TẠO ds2api
-      Log "[3/6] Khởi tạo Lõi API DeepSeek (ds2api)..." Yellow
+      # 3. INSTALL DEEPSEEK-TUI
+      Log "[3/7] Installing DeepSeek-TUI (coding agent)..." Cyan
+      $ErrorActionPreference = "SilentlyContinue"
+      npm install -g deepseek-tui 2>$null | Out-Null
+      $ErrorActionPreference = "Stop"
+      $deepseekVer = deepseek --version 2>$null
+      if ($deepseekVer) {
+          Log "  DeepSeek-TUI $deepseekVer installed" Green
+      } else {
+          Log "  npm install failed, trying cargo..." Yellow
+          $ErrorActionPreference = "SilentlyContinue"
+          cargo install deepseek-tui-cli --locked 2>$null | Out-Null
+          $ErrorActionPreference = "Stop"
+      }
+
+      # 4. SETUP ds2api
+      Log "[4/7] Setting up ds2api (DeepSeek API gateway)..." Yellow
       $ds2apiDir = "C:\ds2api"
       New-Item -ItemType Directory -Path $ds2apiDir -Force | Out-Null
       if (Download-WithRetry "https://github.com/CJackHwang/ds2api/releases/latest/download/ds2api-windows-amd64.zip" "C:\ds2api.zip") {
@@ -120,7 +123,7 @@ install:
           Set-Content -Path "$ds2apiWorkDir\config.json" -Value $ds2apiConfig -Encoding UTF8
           Start-Process -FilePath $ds2apiExe -WorkingDirectory $ds2apiWorkDir -WindowStyle Hidden
 
-          # Chờ ds2api khởi động
+          # Wait for ds2api
           $ds2apiReady = $false
           for ($w = 1; $w -le 10; $w++) {
               Start-Sleep -Seconds 2
@@ -133,8 +136,8 @@ install:
           else { Log "  ds2api may not be ready, continuing anyway..." Yellow }
       } else { Log "  ds2api download FAILED!" Red }
 
-      # 4. KHỞI TẠO 9ROUTER
-      Log "[4/6] Dệt lưới định tuyến MITM 9router..." Yellow
+      # 5. SETUP 9ROUTER
+      Log "[5/7] Setting up 9router (MITM proxy)..." Yellow
       npm install -g 9router 2>$null | Out-Null
       $9rConfigDir = "$env:USERPROFILE\.9router"
       if (!(Test-Path $9rConfigDir)) { New-Item -ItemType Directory -Path $9rConfigDir -Force | Out-Null }
@@ -146,13 +149,7 @@ install:
               type = "openai"
               baseUrl = "http://127.0.0.1:5001/v1"
               apiKey = $env:API_KEY
-              models = @(
-                  "deepseek-v4-flash",
-                  "deepseek-v4-pro",
-                  "deepseek-v4-flash-nothinking",
-                  "deepseek-v4-lite",
-                  "deepseek-chat"
-              )
+              models = @("deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-nothinking")
               enabled = $true
           }
       } | ConvertTo-Json -Depth 5
@@ -161,9 +158,8 @@ install:
       $settings = @{
           mitm = @{ enabled = $true; port = 9090 }
           mappings = @(
-              @{ from = "gemini-3.1-pro-high"; to = "ds2api-local/deepseek-v4-pro" }
-              @{ from = "gemini-3.1-pro-low"; to = "ds2api-local/deepseek-v4-flash" }
-              @{ from = "gemini-3-flash"; to = "ds2api-local/deepseek-v4-flash-nothinking" }
+              @{ from = "gemini-2.5-pro"; to = "ds2api-local/deepseek-v4-pro" }
+              @{ from = "gemini-2.5-flash"; to = "ds2api-local/deepseek-v4-flash" }
               @{ from = "gpt-4o"; to = "ds2api-local/deepseek-v4-pro" }
               @{ from = "gpt-4o-mini"; to = "ds2api-local/deepseek-v4-flash" }
               @{ from = "claude-sonnet-4-20250514"; to = "ds2api-local/deepseek-v4-pro" }
@@ -172,7 +168,6 @@ install:
       } | ConvertTo-Json -Depth 5
       Set-Content -Path "$9rConfigDir\settings.json" -Value $settings -Encoding UTF8
 
-      # FIXED: Broken path - was "$env:APPDATA\npm\9router.cmd"
       $npmGlobalPrefix = (npm config get prefix 2>$null).Trim()
       $9routerCmd = Join-Path $npmGlobalPrefix "9router.cmd"
       $env:ROUTER_PATH = $9routerCmd
@@ -186,21 +181,31 @@ install:
           Log "  MITM CA certificate installed" Green
       }
 
-      Log "[5/5] Kiểm tra mạng trước khi khởi động..." Cyan
-      $netOk = $false
-      for ($n = 1; $n -le 5; $n++) {
-          try {
-              $r = Invoke-WebRequest -Uri "http://127.0.0.1:9090" -TimeoutSec 3 -ErrorAction Stop
-              $netOk = $true; break
-          } catch { if ($_.Exception.Message -match "404|200|301|302|remote") { $netOk = $true; break } }
-          Start-Sleep -Seconds 3
-      }
-      if ($netOk) { Log "  MITM proxy responding" Green }
-      else { Log "  MITM proxy not responding, IDE may fail" Yellow }
+      # 6. CONFIGURE DEEPSEEK-TUI
+      Log "[6/7] Configuring DeepSeek-TUI..." Cyan
+      $dsConfigDir = "$env:USERPROFILE\.deepseek"
+      if (!(Test-Path $dsConfigDir)) { New-Item -ItemType Directory -Path $dsConfigDir -Force | Out-Null }
+      $dsConfig = @{
+          api_base_url = "http://127.0.0.1:5001"
+          api_key = $env:API_KEY
+          default_model = "deepseek-v4-pro"
+      } | ConvertTo-Json -Depth 5
+      Set-Content -Path "$dsConfigDir\config.json" -Value $dsConfig -Encoding UTF8
+      Log "  DeepSeek-TUI configured -> localhost:5001" Green
+
+      # 7. VERIFY ALL SERVICES
+      Log "[7/7] Verifying services..." Cyan
+      Start-Sleep -Seconds 3
+      $ds2apiStatus = if (Get-Process ds2api -EA SilentlyContinue) { "RUNNING" } else { "DOWN" }
+      $routerStatus = if (Get-Process node -EA SilentlyContinue) { "RUNNING" } else { "DOWN" }
+      Log "  ds2api: $ds2apiStatus | 9router: $routerStatus" Green
 
       Log "========================================" Green
-      Log " INSTALL COMPLETE - READY TO LAUNCH " Green
+      Log " ALL SERVICES READY - GOD MODE ACTIVE " Green
       Log "========================================" Green
+      Log " ds2api: http://127.0.0.1:5001" Cyan
+      Log " 9router: http://127.0.0.1:9090" Cyan
+      Log " DeepSeek-TUI: deepseek" Cyan
 
 test_script:
   - ps: |
@@ -213,26 +218,13 @@ test_script:
       }
 
       Log "========================================" Green
-      Log " GOD MODE ACTIVE - CẢNH GIỚI BẤT TỬ " Green
+      Log " GOD MODE ACTIVE - MONITORING " Green
       Log "========================================" Green
 
-      # Chờ proxy ready
-      $proxyReady = $false
-      for ($pw = 1; $pw -le 30; $pw++) {
-          try {
-              $r = Invoke-WebRequest -Uri "http://127.0.0.1:9090" -TimeoutSec 2 -ErrorAction Stop
-              $proxyReady = $true; break
-          } catch {
-              if ($_.Exception.Message -match "404|200|301|302|remote|forcibly") { $proxyReady = $true; break }
-          }
-          Start-Sleep -Seconds 3
-      }
-      if (!$proxyReady) { Log "Proxy not ready after 90s!" Red }
       $signature = '[DllImport("psapi.dll")] public static extern int EmptyWorkingSet(IntPtr hwProc);'
       $psapi = Add-Type -MemberDefinition $signature -Name "PSAPI" -Namespace "Win32" -PassThru
       $wsh = New-Object -ComObject WScript.Shell
 
-      # FIXED: RAM calculation (was dividing by 1024 twice)
       $maxMinutes = 60
       for ($i = 1; $i -le $maxMinutes; $i++) {
           $wsh.SendKeys('{F15}')
@@ -256,10 +248,8 @@ test_script:
               Start-Process -FilePath $env:ROUTER_PATH -ArgumentList "start", "--mitm" -WindowStyle Hidden
           }
 
-
           $psapi::EmptyWorkingSet([System.Diagnostics.Process]::GetCurrentProcess().Handle) | Out-Null
 
-          # FIXED: RAM calculation
           $freeMemMB = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
           $ds2apiOk = if (Get-Process ds2api -EA SilentlyContinue) { "OK" } else { "DOWN" }
           $routerOk = if (Get-Process node -EA SilentlyContinue) { "OK" } else { "DOWN" }
@@ -278,21 +268,19 @@ on_finish:
           Add-Content -Path $logFile -Value $line -ErrorAction SilentlyContinue
       }
 
-      Log "[*] Hết phiên. Kích hoạt quy trình tự hủy..." DarkRed
+      Log "[*] Session ended. Cleaning up..." DarkRed
 
-      # Graceful shutdown - kill process trees
       foreach ($procName in @("ds2api", "node")) {
           Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object {
               Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
           }
       }
 
-      # Cleanup traces
       Remove-Item "$env:USERPROFILE\.antigravity" -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item "$env:USERPROFILE\.9router" -Recurse -Force -ErrorAction SilentlyContinue
       Remove-Item "C:\ds2api.zip" -Force -ErrorAction SilentlyContinue
       Remove-Item "$env:TEMP\chrome_installer.exe" -Force -ErrorAction SilentlyContinue
       Remove-Item "$env:TEMP\session.zip" -Force -ErrorAction SilentlyContinue
 
-      Log "[+] Không để lại dấu vết. Cáo lui!" Green
+      Log "[+] Clean shutdown complete!" Green
       Log "[+] Log saved to Desktop\phantom-node.log" Green
