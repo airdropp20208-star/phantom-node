@@ -14,55 +14,33 @@ jobs:
     timeout-minutes: 360
     
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Setup
         id: setup
         shell: pwsh
         run: |
           $ErrorActionPreference = "Continue"
-          $ghToken = "${{ secrets.GITHUB_TOKEN }}"
-          
-          # RDP
           iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
-          $rdpDetails = Get-Content "$env:USERPROFILE\Desktop\*.txt" -EA SilentlyContinue | Select-String "Password"
-          
-          # SSH
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 2>$null
           Start-Service sshd
           Set-Service -Name sshd -StartupType Automatic
           $sshd = "$env:ProgramData\ssh\sshd_config"
           (Get-Content $sshd) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshd
           Restart-Service sshd
-          
-          # Cloudflared
           Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
           Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -WindowStyle Hidden
           Start-Sleep -Seconds 20
-          
-          # Get tunnel URL from cloudflared process output
           $tunnelUrl = ""
-          $procs = Get-Process cloudflared -EA SilentlyContinue
-          # Try reading from stderr which cloudflared writes to
-          $netstat = netstat -ano | Select-String ":22 "
-          
-          # Alternative: check cloudflared's web interface
-          try {
-              $cloudApi = Invoke-RestMethod -Uri "http://127.0.0.1:49589" -TimeoutSec 3 -EA SilentlyContinue
-          } catch {}
-          
-          # Use localtunnel as backup
-          npm install -g localtunnel 2>$null | Out-Null
-          Start-Process -FilePath "npx" -ArgumentList "localtunnel --port 22" -NoNewWindow -RedirectStandardOutput "C:\lt-out.txt" -RedirectStandardError "C:\lt-err.txt"
-          Start-Sleep -Seconds 15
-          $ltOut = Get-Content "C:\lt-out.txt" -EA SilentlyContinue
-          $ltErr = Get-Content "C:\lt-err.txt" -EA SilentlyContinue
-          $match = ($ltOut + $ltErr) | Select-String "https://.*loca\.lt"
-          if ($match) { $tunnelUrl = $match.Matches[0].Value }
-          
-          # Node + ds2api
+          Get-ChildItem -Path "C:\Users\*\*.log" -Recurse -EA SilentlyContinue | ForEach-Object {
+              $m = Get-Content $_.FullName -EA SilentlyContinue | Select-String "https://.*trycloudflare\.com"
+              if ($m) { $tunnelUrl = $m.Matches[0].Value }
+          }
+          Write-Host "TUNNEL: $tunnelUrl" -ForegroundColor Green
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Continue"
-          
           $dir = "C:\ds2api"
           New-Item -ItemType Directory -Path $dir -Force | Out-Null
           $ds2apiExe = ""
@@ -76,33 +54,35 @@ jobs:
                   Start-Process -FilePath $ds2apiExe -WorkingDirectory $dir -WindowStyle Hidden
               }
           } catch {}
-          
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
-          
-          # POST connection info to Gist (realtime accessible)
-          $gistBody = @{
-              description = "Phantom Node VPS - Active Connection Info"
-              files = @{
-                  "connection.md" = @{
-                      content = "# Phantom Node VPS`n`n## SSH Tunnel`nURL: $tunnelUrl`nUsername: appveyor`nPassword: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I=`n`n## RDP`nServer: 52.161.83.194:3389`nUsername: appveyor`nPassword: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I=`n`n## Services`nds2api: $(if ($ds2apiExe) { 'Running' } else { 'Not installed' })`nDeepSeek-TUI: Installed`n`n## Connect Commands`nssh appveyor@$($tunnelUrl -replace 'https://','')`n`nGenerated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
-                  }
-              }
-          } | ConvertTo-Json -Depth 5
-          
-          # Create/update gist
-          $gists = Invoke-RestMethod -Uri "https://api.github.com/gists" -Headers @{Authorization="token $ghToken"} -TimeoutSec 10
-          $gist = $gists | Where-Object { $_.description -like "*Phantom Node*" } | Select-Object -First 1
-          
-          if ($gist) {
-              Invoke-RestMethod -Uri "https://api.github.com/gists/$($gist.id)" -Method Patch -Headers @{Authorization="token $ghToken"} -Body $gistBody -TimeoutSec 10 | Out-Null
-              Write-Host "GIST UPDATED: https://gist.github.com/$($gist.id)" -ForegroundColor Green
-          } else {
-              $newGist = Invoke-RestMethod -Uri "https://api.github.com/gists" -Method Post -Headers @{Authorization="token $ghToken"} -Body $gistBody -TimeoutSec 10
-              Write-Host "GIST CREATED: https://gist.github.com/$($newGist.id)" -ForegroundColor Green
-          }
-          
-          Write-Host "TUNNEL: $tunnelUrl" -ForegroundColor Green
+          $ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -TimeoutSec 10).Content
+          $lines = @()
+          $lines += "# Phantom Node VPS - Connection Info"
+          $lines += "Updated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
+          $lines += ""
+          $lines += "## SSH Tunnel"
+          $lines += "URL: $tunnelUrl"
+          $lines += "User: appveyor"
+          $lines += "Pass: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I="
+          $lines += ""
+          $lines += "## RDP"
+          $lines += "Server: ${ip}:3389"
+          $lines += "User: appveyor"
+          $lines += "Pass: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I="
+          $lines += ""
+          $lines += "## Connect"
+          $lines += "ssh appveyor@$($tunnelUrl -replace 'https://','')"
+          $lines += ""
+          $lines += "## Services"
+          $lines += "ds2api: $(if ($ds2apiExe) { 'OK' } else { 'NOT INSTALLED' })"
+          $lines += "deepseek: OK"
+          $lines | Set-Content -Path "CONNECTION.md" -Encoding UTF8
+          git config user.email "phantom@node"
+          git config user.name "Phantom Node"
+          git add CONNECTION.md
+          git commit -m "Connection info $(Get-Date -Format 'HH:mm:ss')" -m "[skip ci]"
+          git push
           echo "DS2API=$ds2apiExe" >> $env:GITHUB_OUTPUT
 
       - name: Monitor
