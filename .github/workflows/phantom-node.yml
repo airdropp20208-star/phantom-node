@@ -31,20 +31,30 @@ jobs:
           (Get-Content $sshd) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshd
           Restart-Service sshd
           
-          # Cloudflared tunnel
-          Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cloudflared.exe"
-          Start-Process -FilePath "C:\cloudflared.exe" -ArgumentList "tunnel --url ssh://localhost:22" -NoNewWindow -RedirectStandardOutput "C:\tunnel.log" -RedirectStandardError "C:\tunnel-err.log"
-          Start-Sleep -Seconds 15
-          
-          $tunnelUrl = ""
-          $errLog = Get-Content "C:\tunnel-err.log" -EA SilentlyContinue
-          $match = $errLog | Select-String "https://.*trycloudflare.com"
-          if ($match) { $tunnelUrl = $match.Matches[0].Value }
-          
-          # Node
+          # Node (for localtunnel)
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Continue"
+          npm install -g localtunnel 2>$null | Out-Null
+          
+          # Start SSH tunnel via localtunnel
+          $tunnelUrl = ""
+          Start-Process -FilePath "lt" -ArgumentList "--port 22 --print-requests" -NoNewWindow -RedirectStandardOutput "C:\lt.log" -RedirectStandardError "C:\lt-err.log"
+          Start-Sleep -Seconds 15
+          
+          $ltLog = Get-Content "C:\lt.log" -EA SilentlyContinue
+          $ltErr = Get-Content "C:\lt-err.log" -EA SilentlyContinue
+          Write-Host "LT stdout: $ltLog" -ForegroundColor Yellow
+          Write-Host "LT stderr: $ltErr" -ForegroundColor Yellow
+          
+          $match = $ltLog | Select-String "https://.*loca.lt"
+          if ($match) { $tunnelUrl = $match.Matches[0].Value }
+          if (-not $tunnelUrl) {
+              $match = $ltErr | Select-String "https://.*loca.lt"
+              if ($match) { $tunnelUrl = $match.Matches[0].Value }
+          }
+          
+          Write-Host "TUNNEL: $tunnelUrl" -ForegroundColor Green
           
           # ds2api
           $dir = "C:\ds2api"
@@ -64,60 +74,45 @@ jobs:
                   Start-Process -FilePath $ds2apiExe -WorkingDirectory $dir -WindowStyle Hidden
                   Start-Sleep -Seconds 5
               }
-          } catch {}
+          } catch { Write-Host "ds2api error: $($_.Exception.Message)" -ForegroundColor Yellow }
           
           # DeepSeek-TUI
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
           
-          # Write summary with connection info
-          $summary = @"
-# Phantom Node v4.0 - Connection Info
-
-## SSH (via Cloudflare Tunnel)
-``````
-ssh appveyor@$($tunnelUrl -replace 'tcp://','')
-``````
-
-## RDP
-- **Server:** $($env:COMPUTERNAME)
-- **Username:** appveyor
-- **Password:** (check RDP step output)
-
-## Services
-- ds2api: $(if ($ds2apiExe) { "Running on :5001" } else { "Not installed" })
-- DeepSeek-TUI: $(if (Get-Command deepseek -EA SilentlyContinue) { "Installed" } else { "Not installed" })
-
-## Model Aliases
-| Request | Mapped |
-|---------|--------|
-| gpt-4o | deepseek-v4-pro |
-| claude-sonnet | deepseek-v4-pro |
-| gemini-2.5-pro | deepseek-v4-pro |
-"@
-          echo $summary >> $env:GITHUB_STEP_SUMMARY
+          # Save for monitor step
           echo "DS2API=$ds2apiExe" >> $env:GITHUB_OUTPUT
           echo "TUNNEL=$tunnelUrl" >> $env:GITHUB_OUTPUT
+          
+          # Summary
+          @"
+# Phantom Node v4.0
+
+## SSH Tunnel
+ssh appveyor@$($tunnelUrl -replace 'https://','')
+Password: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I=
+
+## RDP
+Server: $($env:COMPUTERNAME)
+Username: appveyor  
+Password: /AsS4+LRrs/s8Cx1Pv9BRLDENH9mCLZWkTcd0I=
+"@ >> $env:GITHUB_STEP_SUMMARY
 
       - name: Monitor
         shell: pwsh
         run: |
           $ds2apiExe = "${{ steps.setup.outputs.DS2API }}"
           $tunnelUrl = "${{ steps.setup.outputs.TUNNEL }}"
+          Write-Host "=== MONITORING | tunnel: $tunnelUrl ===" -ForegroundColor Green
           
           $wsh = New-Object -ComObject WScript.Shell
-          
           for ($i = 1; $i -le 350; $i++) {
               $wsh.SendKeys('{F15}')
-              
               $d = if ($ds2apiExe -and (Get-Process ds2api -EA SilentlyContinue)) { "OK" } else { "N/A" }
               $ram = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
-              
-              Write-Host "[$i/350] RAM:${ram}MB | ds2api:$d | tunnel:$tunnelUrl" -ForegroundColor Cyan
-              
+              Write-Host "[$i/350] RAM:${ram}MB | ds2api:$d" -ForegroundColor Cyan
               if ($ds2apiExe -and $d -eq "N/A") {
                   Start-Process -FilePath $ds2apiExe -WorkingDirectory (Split-Path $ds2apiExe) -WindowStyle Hidden
               }
-              
               Start-Sleep -Seconds 60
           }
