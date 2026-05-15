@@ -14,191 +14,105 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - name: Enable RDP + SSH
+      - name: Enable RDP + SSH + Tunnel
         shell: pwsh
         run: |
           # Enable RDP
           iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
           
-          # Enable OpenSSH Server
-          Write-Host "=== Enabling SSH ===" -ForegroundColor Cyan
+          # Enable OpenSSH
           Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 2>$null
           Start-Service sshd
           Set-Service -Name sshd -StartupType Automatic
           
-          # Create SSH key directory
-          $sshDir = "$env:USERPROFILE\.ssh"
-          if (!(Test-Path $sshDir)) { New-Item -ItemType Directory -Path $sshDir -Force | Out-Null }
+          # Allow password auth
+          $sshdConfig = "$env:ProgramData\ssh\sshd_config"
+          (Get-Content $sshdConfig) -replace '#PasswordAuthentication yes', 'PasswordAuthentication yes' | Set-Content $sshdConfig
+          Restart-Service sshd
           
-          # Generate key pair for root
-          $keyPath = "$sshDir\phantom_key"
-          ssh-keygen -t ed25519 -f $keyPath -N "" -q
+          # Install ngrok
+          Invoke-WebRequest -Uri "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip" -OutFile "$env:TEMP\ngrok.zip"
+          Expand-Archive -Path "$env:TEMP\ngrok.zip" -DestinationPath "C:\ngrok" -Force
           
-          # Add to authorized_keys
-          $pubKey = Get-Content "$keyPath.pub"
-          Add-Content -Path "$sshDir\authorized_keys" -Value $pubKey
+          # Start SSH tunnel via ngrok (no auth needed for TCP)
+          Start-Process -FilePath "C:\ngrok\ngrok.exe" -ArgumentList "tcp 22 --log stdout" -WindowStyle Hidden
+          Start-Sleep -Seconds 10
           
-          # Show connection info
-          $ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -TimeoutSec 10).Content
-          Write-Host "=== SSH READY ===" -ForegroundColor Green
-          Write-Host "Server: ${ip}:22" -ForegroundColor Yellow
+          # Get tunnel URL
+          $tunnelInfo = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -TimeoutSec 5
+          $tcpUrl = ($tunnelInfo.tunnels | Where-Object { $_.proto -eq "tcp" }).public_url
+          
+          Write-Host "=== SSH TUNNEL READY ===" -ForegroundColor Green
+          Write-Host "SSH: $tcpUrl" -ForegroundColor Yellow
           Write-Host "Username: appveyor" -ForegroundColor Yellow
-          Write-Host "Key saved to: $keyPath" -ForegroundColor Yellow
-          
-          # Also show RDP info
-          Write-Host "=== RDP READY ===" -ForegroundColor Green
-          Write-Host "Server: ${ip}:3389" -ForegroundColor Yellow
-          Write-Host "Username: appveyor" -ForegroundColor Yellow
-          
-          # Print the private key content for download
-          Write-Host "=== PRIVATE KEY (copy this) ===" -ForegroundColor Magenta
-          Get-Content $keyPath
+          Write-Host "RDP: 52.154.132.165:3389" -ForegroundColor Yellow
+          Write-Host "=== CONNECT COMMAND ===" -ForegroundColor Cyan
+          Write-Host "ssh appveyor@$($tcpUrl -replace 'tcp://', '')" -ForegroundColor White
 
       - name: Install Tools
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $logFile = "$env:USERPROFILE\Desktop\phantom-node.log"
           
-          function Log($msg, $color = "White") {
-              $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-              $line = "[$ts] $msg"
-              Write-Host $line -ForegroundColor $color
-              Add-Content -Path $logFile -Value $line -ErrorAction SilentlyContinue
-          }
+          function Log($msg) { Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $msg" -ForegroundColor Cyan }
           
-          function Download-WithRetry($url, $out, $retries = 3) {
-              for ($i = 1; $i -le $retries; $i++) {
-                  try {
-                      Invoke-WebRequest -Uri $url -OutFile $out -TimeoutSec 120
-                      if ((Get-Item $out).Length -gt 0) { return $true }
-                  } catch { Start-Sleep -Seconds 5 }
-              }
-              return $false
-          }
-          
-          Log "=== INSTALLING TOOLS ===" Magenta
-          
-          # Node 18
-          Log "[1/5] Node 18..." Cyan
+          Log "Installing Node 18..."
           $ErrorActionPreference = "SilentlyContinue"
           Install-Product node 18 | Out-Null
           $ErrorActionPreference = "Stop"
-          node --version | ForEach-Object { Log "  Node: $_" Green }
+          node --version
           
-          # ds2api
-          Log "[2/5] ds2api..." Yellow
-          $ds2apiDir = "C:\ds2api"
-          New-Item -ItemType Directory -Path $ds2apiDir -Force | Out-Null
-          if (Download-WithRetry "https://github.com/CJackHwang/ds2api/releases/latest/download/ds2api-windows-amd64.zip" "C:\ds2api.zip") {
-              Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $ds2apiDir -Force
-              $exe = (Get-ChildItem -Path $ds2apiDir -Filter "ds2api.exe" -Recurse | Select-Object -First 1).FullName
-              $env:DS2API_PATH = $exe
-              $env:DS2API_DIR = Split-Path $exe
-              
-              @{
-                  keys = @($env:API_KEY)
-                  accounts = @(@{ email = $env:DS_EMAIL; password = $env:DS_PASSWORD })
-                  model_aliases = @{
-                      "gpt-4o" = "deepseek-v4-pro"
-                      "gpt-4o-mini" = "deepseek-v4-flash"
-                      "claude-sonnet-4-20250514" = "deepseek-v4-pro"
-                      "gemini-2.5-pro" = "deepseek-v4-pro"
-                  }
-              } | ConvertTo-Json -Depth 5 | Set-Content -Path "$env:DS2API_DIR\config.json" -Encoding UTF8
-              
-              Start-Process -FilePath $exe -WorkingDirectory $env:DS2API_DIR -WindowStyle Hidden
-              Start-Sleep -Seconds 5
-              Log "  ds2api running" Green
-          }
+          Log "Installing ds2api..."
+          $dir = "C:\ds2api"
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/CJackHwang/ds2api/releases/latest/download/ds2api-windows-amd64.zip" -OutFile "C:\ds2api.zip"
+          Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $dir -Force
+          $exe = (Get-ChildItem -Path $dir -Filter "ds2api.exe" -Recurse | Select-Object -First 1).FullName
           
-          # DeepSeek-TUI
-          Log "[3/5] DeepSeek-TUI..." Cyan
+          @{
+              keys = @($env:API_KEY)
+              accounts = @(@{ email = $env:DS_EMAIL; password = $env:DS_PASSWORD })
+              model_aliases = @{
+                  "gpt-4o" = "deepseek-v4-pro"
+                  "gpt-4o-mini" = "deepseek-v4-flash"
+                  "claude-sonnet-4-20250514" = "deepseek-v4-pro"
+                  "gemini-2.5-pro" = "deepseek-v4-pro"
+              }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Path "$dir\config.json" -Encoding UTF8
+          
+          Start-Process -FilePath $exe -WorkingDirectory $dir -WindowStyle Hidden
+          Start-Sleep -Seconds 5
+          Log "ds2api running on :5001"
+          
+          Log "Installing DeepSeek-TUI..."
           $ErrorActionPreference = "SilentlyContinue"
           npm install -g deepseek-tui 2>$null | Out-Null
           $ErrorActionPreference = "Stop"
-          Log "  Installed" Green
           
-          # 9router
-          Log "[4/5] 9router..." Yellow
-          npm install -g 9router 2>$null | Out-Null
-          $9rDir = "$env:USERPROFILE\.9router"
-          if (!(Test-Path $9rDir)) { New-Item -ItemType Directory -Path $9rDir -Force | Out-Null }
-          
-          @{
-              mitm = @{ enabled=$true; port=9090 }
-              mappings = @(
-                  @{ from="gpt-4o"; to="ds2api-local/deepseek-v4-pro" }
-                  @{ from="claude-sonnet-4-20250514"; to="ds2api-local/deepseek-v4-pro" }
-              )
-          } | ConvertTo-Json -Depth 5 | Set-Content -Path "$9rDir\settings.json" -Encoding UTF8
-          
-          $npmPrefix = (npm config get prefix 2>$null).Trim()
-          $9routerCmd = Join-Path $npmPrefix "9router.cmd"
-          Start-Process -FilePath $9routerCmd -ArgumentList "start","--mitm" -WindowStyle Hidden
-          Log "  9router running" Green
-          
-          # Config DeepSeek-TUI
-          Log "[5/5] Configure deepseek..." Cyan
-          $dsDir = "$env:USERPROFILE\.deepseek"
-          if (!(Test-Path $dsDir)) { New-Item -ItemType Directory -Path $dsDir -Force | Out-Null }
-          @{
-              api_base_url = "http://127.0.0.1:5001"
-              api_key = $env:API_KEY
-              default_model = "deepseek-v4-pro"
-          } | ConvertTo-Json | Set-Content -Path "$dsDir\config.json" -Encoding UTF8
-          
-          Log "=== ALL READY ===" Green
-          Log "SSH: appveyor@IP:22 | deepseek command ready" Cyan
+          Log "All done! Services running."
+          Log "deepseek command available in terminal"
 
-      - name: Keep Alive (6h)
+      - name: Keep Alive
         shell: pwsh
         run: |
-          $logFile = "$env:USERPROFILE\Desktop\phantom-node.log"
-          function Log($msg, $color = "White") {
-              $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-              Write-Host "[$ts] $msg" -ForegroundColor $color
-              Add-Content -Path $logFile -Value "[$ts] $msg" -ErrorAction SilentlyContinue
-          }
-          
-          Log "=== MONITORING ===" Green
-          
-          $signature = '[DllImport("psapi.dll")] public static extern int EmptyWorkingSet(IntPtr hwProc);'
-          $psapi = Add-Type -MemberDefinition $signature -Name "PSAPI" -Namespace "Win32" -PassThru
-          $wsh = New-Object -ComObject WScript.Shell
+          Write-Host "=== MONITORING (6h) ===" -ForegroundColor Green
           
           for ($i = 1; $i -le 360; $i++) {
+              # Keep alive
+              $wsh = New-Object -ComObject WScript.Shell
               $wsh.SendKeys('{F15}')
               
-              foreach ($p in @("ds2api","node")) {
-                  Get-Process -Name $p -EA SilentlyContinue | ForEach-Object { $_.PriorityClass = "High" }
-              }
-              
-              if (!(Get-Process ds2api -EA SilentlyContinue)) {
-                  Log "[!] ds2api restarting" Red
-                  Start-Process -FilePath $env:DS2API_PATH -WorkingDirectory $env:DS2API_DIR -WindowStyle Hidden
-              }
-              if (!(Get-Process node -EA SilentlyContinue)) {
-                  Log "[!] 9router restarting" Red
-                  Start-Process -FilePath "$env:APPDATA\npm\9router.cmd" -ArgumentList "start","--mitm" -WindowStyle Hidden
-              }
-              
-              $psapi::EmptyWorkingSet([System.Diagnostics.Process]::GetCurrentProcess().Handle) | Out-Null
-              
-              $ram = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
+              # Status
               $d = if (Get-Process ds2api -EA SilentlyContinue) { "OK" } else { "DOWN" }
               $r = if (Get-Process node -EA SilentlyContinue) { "OK" } else { "DOWN" }
-              Log "[$i/360] RAM:${ram}MB | ds2api:$d | router:$r" Cyan
+              $ng = if (Get-Process ngrok -EA SilentlyContinue) { "OK" } else { "DOWN" }
+              $ram = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024, 1)
+              
+              Write-Host "[$i/360] RAM:${ram}MB | ds2api:$d | ngrok:$ng" -ForegroundColor Cyan
+              
+              # Self-heal
+              if ($d -eq "DOWN") { Start-Process "C:\ds2api\ds2api.exe" -WorkingDirectory "C:\ds2api" -WindowStyle Hidden }
+              if ($ng -eq "DOWN") { Start-Process "C:\ngrok\ngrok.exe" -ArgumentList "tcp 22" -WindowStyle Hidden }
               
               Start-Sleep -Seconds 60
           }
-
-      - name: Cleanup
-        if: always()
-        shell: pwsh
-        run: |
-          @("ds2api","node") | ForEach-Object {
-              Get-Process -Name $_ -EA SilentlyContinue | Stop-Process -Force -EA SilentlyContinue
-          }
-          Remove-Item "C:\ds2api.zip" -Force -EA SilentlyContinue
-          Write-Host "Clean!" -ForegroundColor Green
