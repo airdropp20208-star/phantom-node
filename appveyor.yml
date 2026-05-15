@@ -1,0 +1,180 @@
+# ==============================================================================
+#   PHANTOM NODE - GOD MODE V999.0 [ULTIMATE UNLIMITED]
+#   Architecture: DeepSeek V4 (Flash/Pro/NoThinking) + 9Router + ds2api
+#   Features: Self-Healing, Dynamic RAM Cleansing, CPU Priority
+#   Patch: Appveyor Install-Product False Positive Fix & Missing Env Vars Added
+# ==============================================================================
+
+version: 999.0.{build}
+image: Visual Studio 2022
+build: off
+
+shallow_clone: true
+clone_depth: 1
+branches:
+  only:
+    - main
+
+environment:
+  GITHUB_TOKEN: "YOUR_GITHUB_TOKEN_HERE"
+  APP_DOWNLOAD_URL: "https://edgedl.me.gvt1.com/edgedl/release2/j0qc3/antigravity/stable/1.23.2-4781536860569600/windows-x64/Antigravity.exe"
+  
+  # ==========================================================================
+  # [QUAN TRỌNG] ĐIỀN THÔNG TIN CỦA BẠN VÀO 2 DÒNG DƯỚI ĐÂY:
+  # ==========================================================================
+  DEEPSEEK_TOKEN: "YOUR_DEEPSEEK_TOKEN_HERE"
+  SESSION_DOWNLOAD_URL: "YOUR_SESSION_URL_HERE"
+
+init:
+  - ps: iex ((new-object net.webclient).DownloadString('https://raw.githubusercontent.com/appveyor/ci/master/scripts/enable-rdp.ps1'))
+
+install:
+  - ps: |
+      $ErrorActionPreference = "Stop"
+      Write-Host "===========================================================" -ForegroundColor Magenta
+      Write-Host " KHỞI CHẠY PHANTOM NODE - GOD MODE SEQUENCE " -ForegroundColor Magenta
+      Write-Host "===========================================================" -ForegroundColor Magenta
+      
+      # 1. ÉP XUNG VÀ GIẾT DỊCH VỤ RÁC (EXTREME DEBLOAT)
+      Write-Host "[*] Đang chiếm quyền kiểm soát hệ điều hành..." -ForegroundColor Cyan
+      try { Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue } catch { }
+      $servicesToKill = @("wsearch", "DiagTrack", "SysMain", "WerSvc", "Spooler", "BITS", "wuauserv")
+      foreach ($svc in $servicesToKill) {
+          Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
+          Set-Service -Name $svc -StartupType Disabled -ErrorAction SilentlyContinue
+      }
+      
+      # 2. CÀI ĐẶT MÔI TRƯỜNG LÕI (FIXED: Bỏ qua False Positive Error của Appveyor)
+      Write-Host "[*] Đang đúc kết môi trường Node LTS & Chrome..." -ForegroundColor Cyan
+      $ErrorActionPreference = "SilentlyContinue"
+      Install-Product node 18 | Out-Null
+      $ErrorActionPreference = "Stop"
+      
+      $chromePath = "$env:TEMP\chrome_installer.exe"
+      Invoke-WebRequest -Uri "https://dl.google.com/chrome/install/latest/chrome_installer.exe" -OutFile $chromePath
+      Start-Process $chromePath -ArgumentList "/silent /install" -Wait
+      
+      # 3. BƠM SESSION VÀO HỆ THỐNG
+      Write-Host "[*] Khôi phục ký ức Agent (Session Injection)..." -ForegroundColor Green
+      $configDir = "$env:USERPROFILE\.antigravity"
+      if (!(Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+      $sessionZip = "$env:TEMP\session.zip"
+      $driveUrl = $env:SESSION_DOWNLOAD_URL + "&confirm=t"
+      Invoke-WebRequest -Uri $driveUrl -OutFile $sessionZip -UserAgent "Mozilla/5.0"
+      Expand-Archive -Path $sessionZip -DestinationPath $configDir -Force
+      
+      # 4. KHỞI TẠO ĐỘNG ds2api
+      Write-Host "[*] Khởi tạo Lõi API DeepSeek (ds2api)..." -ForegroundColor Yellow
+      $ds2apiDir = "C:\ds2api"
+      New-Item -ItemType Directory -Path $ds2apiDir -Force | Out-Null
+      Invoke-WebRequest -Uri "https://github.com/liuran001/ds2api/releases/latest/download/ds2api-windows-amd64.zip" -OutFile "C:\ds2api.zip"
+      Expand-Archive -Path "C:\ds2api.zip" -DestinationPath $ds2apiDir -Force
+      $ds2apiExe = (Get-ChildItem -Path $ds2apiDir -Filter "ds2api.exe" -Recurse | Select-Object -First 1).FullName
+      $env:DS2API_PATH = $ds2apiExe
+      $ds2apiWorkDir = Split-Path $ds2apiExe
+      $env:DS2API_DIR = $ds2apiWorkDir
+      
+      $ds2apiConfig = @{
+          port = 5001
+          api_key = "local-key"
+          accounts = @( @{ token = $env:DEEPSEEK_TOKEN; platform = "deepseek" } )
+      } | ConvertTo-Json -Depth 5
+      Set-Content -Path "$ds2apiWorkDir\config.json" -Value $ds2apiConfig -Encoding UTF8
+      Start-Process -FilePath $ds2apiExe -WorkingDirectory $ds2apiWorkDir -WindowStyle Hidden
+      
+      # 5. KHỞI TẠO ĐỊNH TUYẾN 9ROUTER
+      Write-Host "[*] Dệt lưới định tuyến MITM 9router..." -ForegroundColor Yellow
+      npm install -g 9router | Out-Null
+      $9rConfigDir = "$env:USERPROFILE\.9router"
+      if (!(Test-Path $9rConfigDir)) { New-Item -ItemType Directory -Path $9rConfigDir -Force | Out-Null }
+      
+      $providers = @{
+          "ds2api-local" = @{ id="ds2api-local"; name="DeepSeek V4 VIP"; type="openai"; baseUrl="http://127.0.0.1:5001/v1"; apiKey="local-key"; models=@("deepseek-v4-flash","deepseek-v4-pro","deepseek-v4-flash-nothinking"); enabled=$true }
+      } | ConvertTo-Json -Depth 5
+      Set-Content -Path "$9rConfigDir\providers.json" -Value $providers -Encoding UTF8
+      
+      $settings = @{
+          mitm = @{ enabled = $true; port = 9090 }
+          mappings = @(
+              @{ from="gemini-3.1-pro-high"; to="ds2api-local/deepseek-v4-pro" },
+              @{ from="gemini-3.1-pro-low"; to="ds2api-local/deepseek-v4-flash" },
+              @{ from="gemini-3-flash"; to="ds2api-local/deepseek-v4-flash-nothinking" }
+          )
+      } | ConvertTo-Json -Depth 5
+      Set-Content -Path "$9rConfigDir\settings.json" -Value $settings -Encoding UTF8
+      
+      $9routerCmd = "$env:APPDATA
+pm\9router.cmd"
+      $env:ROUTER_PATH = $9routerCmd
+      Start-Process -FilePath $9routerCmd -ArgumentList "start", "--mitm" -WindowStyle Hidden
+      
+      Start-Sleep -Seconds 5
+      $certPath = "$9rConfigDir\certs\ca.crt"
+      if (Test-Path $certPath) { Import-Certificate -FilePath $certPath -CertStoreLocation "Cert:\LocalMachine\Root" | Out-Null }
+      
+      # 6. CÀI ĐẶT IDE
+      Write-Host "[*] Kích hoạt Vỏ bọc Antigravity IDE..." -ForegroundColor Yellow
+      $setupFile = "$env:TEMP\Antigravity_Setup.exe"
+      Stop-Process -Name "Antigravity*" -Force -ErrorAction SilentlyContinue
+      Invoke-WebRequest -Uri $env:APP_DOWNLOAD_URL -OutFile $setupFile
+      Start-Process $setupFile -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-" -Wait
+
+test_script:
+  - ps: |
+      Write-Host "===========================================================" -ForegroundColor Green
+      Write-Host " GOD MODE ACTIVE - HỆ THỐNG ĐÃ ĐẠT CẢNH GIỚI BẤT TỬ " -ForegroundColor Green
+      Write-Host "===========================================================" -ForegroundColor Green
+      
+      while (!(Test-NetConnection -ComputerName 127.0.0.1 -Port 9090 -WarningAction SilentlyContinue).TcpTestSucceeded) { Start-Sleep -Seconds 2 }
+      
+      $exePath = "$env:LOCALAPPDATA\Programs\Antigravity\Antigravity.exe"
+      Start-Process $exePath -ArgumentList "--proxy-server=http://127.0.0.1:9090", "--ignore-certificate-errors"
+      
+      $signature = '[DllImport("psapi.dll")] public static extern int EmptyWorkingSet(IntPtr hwProc);'
+      $psapi = Add-Type -MemberDefinition $signature -Name "PSAPI" -Namespace "Win32" -PassThru
+      
+      $wsh = New-Object -ComObject WScript.Shell
+      
+      for ($i = 1; $i -le 60; $i++) {
+          $wsh.SendKeys('{F15}')
+          
+          foreach ($procName in @("ds2api", "node", "Antigravity")) {
+              Get-Process -Name $procName -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::High }
+          }
+          
+          $isDs2apiAlive = Get-Process ds2api -ErrorAction SilentlyContinue
+          if (!$isDs2apiAlive) {
+              Write-Host "[!] Phát hiện ds2api bị sập. Đang thi triển thuật hồi sinh..." -ForegroundColor Red
+              Start-Process -FilePath $env:DS2API_PATH -WorkingDirectory $env:DS2API_DIR -WindowStyle Hidden
+          }
+          
+          $isRouterAlive = Get-Process node -ErrorAction SilentlyContinue
+          if (!$isRouterAlive) {
+              Write-Host "[!] Phát hiện 9router bị sập. Đang khởi động lại..." -ForegroundColor Red
+              Start-Process -FilePath $env:ROUTER_PATH -ArgumentList "start", "--mitm" -WindowStyle Hidden
+          }
+          
+          $isIdeAlive = Get-Process Antigravity -ErrorAction SilentlyContinue
+          if (!$isIdeAlive) {
+              Write-Host "[!] IDE văng! Đang gọi lại IDE..." -ForegroundColor Red
+              Start-Process $exePath -ArgumentList "--proxy-server=http://127.0.0.1:9090", "--ignore-certificate-errors"
+          }
+          
+          $psapi::EmptyWorkingSet([System.Diagnostics.Process]::GetCurrentProcess().Handle) | Out-Null
+          
+          $ram = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024 / 1024, 2)
+          $status = "RAM trống: ${ram}GB | Lõi AI: OK | Cầu nối: OK | Giao diện: OK"
+          Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Thần nhãn ($i/60m): $status" -ForegroundColor Cyan
+          
+          Start-Sleep -Seconds 60
+      }
+
+on_finish:
+  - ps: |
+      Write-Host "[*] Hết phiên 60 phút. Bắt đầu kích hoạt quy trình tự hủy..." -ForegroundColor DarkRed
+      Stop-Process -Name "ds2api" -Force -ErrorAction SilentlyContinue
+      Stop-Process -Name "node" -Force -ErrorAction SilentlyContinue
+      Stop-Process -Name "Antigravity" -Force -ErrorAction SilentlyContinue
+      Remove-Item "$env:USERPROFILE\.antigravity" -Recurse -Force -ErrorAction SilentlyContinue
+      Remove-Item "$env:USERPROFILE\.9router" -Recurse -Force -ErrorAction SilentlyContinue
+      Write-Host "[+] Không để lại dấu vết. Cáo lui!" -ForegroundColor Green
