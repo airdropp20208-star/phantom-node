@@ -230,6 +230,11 @@ jobs:
             - tts
             - vision
             - web
+          telegram:
+            bot_token: 8965017390:AAF0nDHAnADjyiTTfhbmPWi2wCdbV7YFxtQ
+            allowed_chats: '7563947218'
+            reactions: false
+            channel_prompts: {}
           _config_version: 23
           '@ | Out-File -FilePath "$home\config.yaml" -Encoding utf8 -Force
 
@@ -240,13 +245,25 @@ jobs:
               "# Set your API key here`nXIAOMI_API_KEY=YOUR_KEY_HERE" | Out-File -FilePath "$home\.env" -Encoding utf8 -Force
           }
 
+          # Startup script - run gateway for Telegram
           @'
           @echo off
-          title Workspace
-          echo Starting...
-          hermes
+          title Phantom Node
+          echo Starting Hermes Gateway...
+          echo.
+          hermes gateway
           pause
           '@ | Out-File -FilePath "C:\start.bat" -Encoding ascii -Force
+
+          # Also create CLI mode script
+          @'
+          @echo off
+          title Phantom Node - CLI
+          echo Starting Hermes CLI...
+          echo.
+          hermes
+          pause
+          '@ | Out-File -FilePath "C:\cli.bat" -Encoding ascii -Force
 
           Write-Host "Ready" -ForegroundColor Green
 
