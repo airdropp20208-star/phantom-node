@@ -287,12 +287,58 @@ jobs:
           Write-Host "SSH: $sshCmd" -ForegroundColor Cyan
           Write-Host "Tunnel: $url" -ForegroundColor Cyan
 
+      - name: Start Hermes Gateway
+        shell: pwsh
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
+          API_KEY: ${{ github.event.inputs.api_key }}
+        run: |
+          $ErrorActionPreference = "Continue"
+
+          # --- PATH ---
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          $env:PATH = "C:\Python311;C:\Python311\Scripts;C:\nodejs;C:\nodejs\node_modules\.bin;" + $env:PATH
+
+          Write-Host "=== Starting Hermes Gateway ===" -ForegroundColor Cyan
+
+          # Verify config exists
+          $h = "$env:USERPROFILE\.hermes"
+          if (!(Test-Path "$h\config.yaml")) {
+              Write-Warning "config.yaml not found at $h"
+          } else {
+              Write-Host "Config found: $h\config.yaml" -ForegroundColor Green
+          }
+
+          # Start gateway as background job
+          Start-Process -FilePath "hermes" -ArgumentList "gateway" -WorkingDirectory $h -NoNewWindow -RedirectStandardOutput "C:\gateway.log" -RedirectStandardError "C:\gateway-err.log"
+          Start-Sleep 10
+
+          # Check if gateway started
+          $procs = Get-Process -Name "python*" -ErrorAction SilentlyContinue
+          if ($procs) {
+              Write-Host "Gateway processes running: $($procs.Count)" -ForegroundColor Green
+          } else {
+              Write-Warning "No python processes found - gateway may have failed"
+          }
+
+          # Show initial logs
+          if (Test-Path "C:\gateway.log") {
+              Write-Host "=== Gateway stdout ===" -ForegroundColor Yellow
+              Get-Content "C:\gateway.log" -Head 20
+          }
+          if (Test-Path "C:\gateway-err.log") {
+              Write-Host "=== Gateway stderr ===" -ForegroundColor Yellow
+              Get-Content "C:\gateway-err.log" -Head 20
+          }
+
       - name: Keep Alive
         shell: pwsh
         run: |
           for ($i=1;$i -le 320;$i++) {
               (New-Object -ComObject WScript.Shell).SendKeys('{F15}')
               $ram=[math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory/1024,1)
-              Write-Host "[$i/320] RAM:${ram}MB"
+              $procs = (Get-Process -Name "python*" -ErrorAction SilentlyContinue).Count
+              Write-Host "[$i/320] RAM:${ram}MB | Gateway processes:$procs"
               Start-Sleep 60
           }
