@@ -2,7 +2,7 @@
 
 ## SSH
 ```bash
-ssh appveyor@comp-aware-pale-kent.trycloudflare.com
+ssh appveyor@<tunnel-pending>
 ```
 
 ## RDP
