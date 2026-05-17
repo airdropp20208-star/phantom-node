@@ -1,2 +1,2 @@
-SSH: ssh appveyor@salvation-damaged-johns-unit.trycloudflare.com
-Tunnel: https://salvation-damaged-johns-unit.trycloudflare.com
+SSH: ssh appveyor@happens-recorders-knife-effectively.trycloudflare.com
+Tunnel: https://happens-recorders-knife-effectively.trycloudflare.com
