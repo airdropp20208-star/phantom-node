@@ -14,7 +14,7 @@ permissions:
 jobs:
   setup:
     runs-on: windows-latest
-    timeout-minutes: 55
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
 
@@ -60,11 +60,18 @@ jobs:
           try {
               Invoke-WebRequest -Uri "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe" -OutFile "C:\cf.exe"
               Start-Process "C:\cf.exe" "tunnel --url ssh://localhost:22" -NoNewWindow -RedirectStandardError "C:\cf.log"
-              Start-Sleep 30
-              $url = (Get-Content "C:\cf.log" -EA SilentlyContinue | Select-String "https://.*trycloudflare").Matches[0].Value
+              Start-Sleep 60
+              $logContent = Get-Content "C:\cf.log" -EA SilentlyContinue
+              $url = ($logContent | Select-String "https://.*trycloudflare\.com").Matches[0].Value
+              if (-not $url) {
+                  # Try alternate pattern
+                  $url = ($logContent | Select-String "https://\S+trycloudflare\S*").Matches[0].Value
+              }
               if (-not $url) {
                   $url = "(tunnel failed - check C:\cf.log manually)"
-                  Write-Warning "Could not extract tunnel URL"
+                  Write-Warning "Could not extract tunnel URL from log"
+                  Write-Host "Log content:" -ForegroundColor Yellow
+                  $logContent | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
               } else {
                   Write-Host "TUNNEL=$url" -ForegroundColor Green
               }
