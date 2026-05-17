@@ -1,2 +1,2 @@
-SSH: ssh appveyor@isp-scales-ventures-convention.trycloudflare.com
-Tunnel: https://isp-scales-ventures-convention.trycloudflare.com
+SSH: ssh appveyor@salvation-damaged-johns-unit.trycloudflare.com
+Tunnel: https://salvation-damaged-johns-unit.trycloudflare.com
