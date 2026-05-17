@@ -1,2 +1,2 @@
-SSH: ssh appveyor@anyone-busy-drum-researcher.trycloudflare.com
-Tunnel: https://anyone-busy-drum-researcher.trycloudflare.com
+SSH: ssh appveyor@sys-surgery-adventures-kay.trycloudflare.com
+Tunnel: https://sys-surgery-adventures-kay.trycloudflare.com
