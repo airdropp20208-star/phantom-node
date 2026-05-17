@@ -1,2 +1,2 @@
-SSH: ssh runner@https://inventory-wearing-making-grass.trycloudflare.com
+SSH: ssh runner@https://programmer-competition-fare-plc.trycloudflare.com
 Password: phantom123
