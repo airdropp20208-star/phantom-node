@@ -105,6 +105,7 @@ jobs:
           API_KEY: ${{ github.event.inputs.api_key }}
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           XIAOMI_API_KEY: ${{ secrets.XIAOMI_API_KEY }}
+          ALLOWED_CHATS: ${{ secrets.ALLOWED_CHATS }}
         run: |
           $h = "$env:USERPROFILE\.hermes"
           New-Item -ItemType Directory -Force -Path $h | Out-Null
@@ -155,7 +156,7 @@ jobs:
           $c += "  enabled: true`n"
           $c += "telegram:`n"
           $c += "  bot_token: $($env:BOT_TOKEN)`n"
-          $c += "  allowed_chats: '7563947218'`n"
+          $c += "  allowed_chats: '$env:ALLOWED_CHATS'`n"
           $c += "  reactions: false`n"
           $c += "  channel_prompts: {}`n"
           $c += "platform_toolsets:`n"
