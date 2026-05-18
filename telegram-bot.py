@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Phantom Node - Telegram Bot (Anti-Spam)
-Short responses, single message per question
+Phantom Node - Telegram Bot (Anti-Spam v2)
+Skip old messages, short responses, single message
 """
 import os
 import json
@@ -19,30 +19,28 @@ ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("phantom")
 
-# System prompt — force short responses
 SYSTEM_PROMPT = (
     "You are a concise coding assistant. Rules:\n"
     "1. Reply in 1-3 sentences max\n"
-    "2. No markdown headers (##, ###)\n"
-    "3. No bullet point lists\n"
-    "4. Code snippets: max 10 lines\n"
-    "5. If user pastes code, fix it and return ONLY the fixed code, no explanation\n"
-    "6. Never say 'I understand' or repeat user's question\n"
-    "7. Be direct, no pleasantries"
+    "2. No markdown headers\n"
+    "3. No bullet lists\n"
+    "4. Code: max 10 lines\n"
+    "5. Be direct, no pleasantries\n"
+    "6. If unclear, say: 'Làm rõ câu hỏi'"
 )
 
 
 def api_chat(message, history=None):
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     if history:
-        messages.extend(history[-10:])  # Keep last 10 messages only
+        messages.extend(history[-10:])
     messages.append({"role": "user", "content": message})
 
     payload = json.dumps({
         "model": MODEL,
         "messages": messages,
-        "max_tokens": 500,  # Limit response length
-        "temperature": 0.3,  # Lower = more focused
+        "max_tokens": 500,
+        "temperature": 0.3,
     }).encode()
 
     req = urllib.request.Request(
@@ -59,8 +57,7 @@ def api_chat(message, history=None):
             data = json.loads(resp.read())
         content = data["choices"][0]["message"]["content"]
         if not content:
-            return "No response"
-        # Truncate if still too long (1500 chars max for Telegram)
+            return "⚠️ No response"
         if len(content) > 1500:
             content = content[:1497] + "..."
         return content.strip()
@@ -84,18 +81,28 @@ def tg_request(method, data=None, timeout=10):
 
 
 def main():
-    if not BOT_TOKEN:
-        log.error("BOT_TOKEN not set!")
-        return
-    if not API_KEY:
-        log.error("API_KEY not set!")
+    if not BOT_TOKEN or not API_KEY:
+        log.error("BOT_TOKEN or API_KEY not set!")
         return
 
     allowed = set(uid.strip() for uid in ALLOWED_USERS.split(",") if uid.strip())
-    log.info(f"Bot started! Model: {MODEL}, Max tokens: 500")
+    log.info(f"Bot started! Model: {MODEL}")
     log.info(f"Allowed users: {allowed or 'ALL'}")
 
-    offset = 0
+    # SKIP ALL OLD MESSAGES - get latest offset first
+    log.info("Skipping old messages...")
+    try:
+        result = tg_request("getUpdates", {"offset": -1, "timeout": 1}, timeout=5)
+        if result.get("result"):
+            offset = result["result"][-1]["update_id"] + 1
+            log.info(f"Skipped to offset {offset}")
+        else:
+            offset = 0
+            log.info("No old messages")
+    except Exception as e:
+        log.warning(f"Skip failed: {e}, starting fresh")
+        offset = 0
+
     history = {}
 
     while True:
@@ -113,16 +120,16 @@ def main():
                 if not text:
                     continue
 
+                # Skip non-allowed users
                 if allowed and user_id not in allowed:
+                    log.info(f"Blocked user {user_id}")
+                    continue
+
+                # Skip bot's own messages
+                if msg.get("from", {}).get("is_bot"):
                     continue
 
                 log.info(f"[{user_id}] {text[:80]}")
-
-                # Send typing indicator
-                try:
-                    tg_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-                except Exception:
-                    pass
 
                 # Commands
                 if text.lower() in ("/clear", "/reset"):
@@ -130,10 +137,20 @@ def main():
                     tg_request("sendMessage", {"chat_id": chat_id, "text": "✅ Memory cleared"})
                     continue
 
+                if text.lower() == "/start":
+                    tg_request("sendMessage", {"chat_id": chat_id, "text": "🤖 Bot ready! Send code or questions."})
+                    continue
+
                 if text.lower() == "/status":
                     status = f"🤖 Model: `{MODEL}`\n📡 API: `{API_BASE}`"
                     tg_request("sendMessage", {"chat_id": chat_id, "text": status, "parse_mode": "Markdown"})
                     continue
+
+                # Typing indicator
+                try:
+                    tg_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+                except Exception:
+                    pass
 
                 # Update history
                 if chat_id not in history:
@@ -148,12 +165,9 @@ def main():
                 if len(history[chat_id]) > 20:
                     history[chat_id] = history[chat_id][-20:]
 
-                # Send ONE message only
+                # Send ONE message
                 try:
-                    tg_request("sendMessage", {
-                        "chat_id": chat_id,
-                        "text": response,
-                    })
+                    tg_request("sendMessage", {"chat_id": chat_id, "text": response})
                 except Exception as e:
                     log.error(f"Send failed: {e}")
 
