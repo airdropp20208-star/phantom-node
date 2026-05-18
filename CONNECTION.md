@@ -1,2 +1,2 @@
-SSH: ssh runner@https://occupation-rna-leader-obtained.trycloudflare.com
+SSH: ssh runner@https://bags-fits-macro-validation.trycloudflare.com
 Password: phantom123
