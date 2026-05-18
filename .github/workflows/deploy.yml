@@ -23,6 +23,10 @@ jobs:
         with:
           node-version: '20'
 
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
       - name: Install ds2api
         run: |
           curl -L -o ds2api.tar.gz "https://github.com/CJackHwang/ds2api/releases/download/v4.6.1/ds2api_v4.6.1_linux_amd64.tar.gz"
@@ -34,6 +38,9 @@ jobs:
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code && echo "claude OK"
+
+      - name: Install Open Interpreter
+        run: pip install open-interpreter && echo "interpreter OK"
 
       - name: Configure ds2api
         env:
@@ -52,14 +59,17 @@ jobs:
           echo "9router configured"
 
       - name: Configure Claude Code
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           mkdir -p ~/.claude
           cat > ~/.claude/settings.json << 'CCEOF'
           {"permissions":{"allow":["Bash(*)","Read","Write","Edit","WebSearch","WebFetch"]}}
           CCEOF
           echo "claude configured"
+
+      - name: Configure Open Interpreter
+        run: |
+          mkdir -p ~/.open-interpreter
+          echo "open-interpreter configured"
 
       - name: Start ds2api
         run: |
@@ -79,6 +89,8 @@ jobs:
           ALLOWED_USERS: "7563947218"
           ANTHROPIC_BASE_URL: "http://localhost:20128/v1"
           ANTHROPIC_API_KEY: "sk-phantom"
+          OPENAI_API_BASE: "http://localhost:20128/v1"
+          OPENAI_API_KEY: "sk-phantom"
         run: |
           nohup python3 telegram-bot.py > telegram-bot.log 2>&1 & echo $! > telegram-bot.pid
           sleep 5
@@ -113,8 +125,9 @@ jobs:
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
           ss -tlnp | grep -q ':20128' && echo "9router: OK" || echo "9router: FAIL"
           command -v claude > /dev/null && echo "claude: OK" || echo "claude: FAIL"
+          command -v interpreter > /dev/null && echo "interpreter: OK" || echo "interpreter: FAIL"
           kill -0 $(cat telegram-bot.pid 2>/dev/null) 2>/dev/null && echo "telegram-bot: OK" || echo "telegram-bot: FAIL"
-          echo "Flow: Telegram -> Claude Code -> 9router -> ds2api -> DeepSeek"
+          echo "Flow: Telegram -> DeepSeek V4 (free) -> Run code"
 
       - name: Keep Alive
         run: |

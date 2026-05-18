@@ -1,43 +1,44 @@
 #!/usr/bin/env python3
 """
 Phantom Node - Telegram Bot
-Telegram → Claude Code → 9router → ds2api → DeepSeek
+Telegram → Open Interpreter → DeepSeek V4 (FREE via ds2api)
 """
 import os
 import subprocess
 import json
 import logging
-from pathlib import Path
+import time
 
 # Config
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 ALLOWED_USERS = os.environ.get("ALLOWED_USERS", "").split(",")
 WORKDIR = os.environ.get("WORKDIR", os.path.expanduser("~"))
-ANTHROPIC_BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "http://localhost:20128/v1")
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "sk-phantom")
+OPENAI_API_BASE = os.environ.get("OPENAI_API_BASE", "http://localhost:20128/v1")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "sk-phantom")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("phantom-bot")
 
-def call_claude(message: str, timeout: int = 300) -> str:
-    """Call Claude Code CLI with a message and return the response."""
+def call_interpreter(message: str, timeout: int = 300) -> str:
+    """Call Open Interpreter with a message and return the response."""
     env = os.environ.copy()
-    env["ANTHROPIC_BASE_URL"] = ANTHROPIC_BASE_URL
-    env["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
+    env["OPENAI_API_KEY"] = OPENAI_API_KEY
+    env["OPENAI_API_BASE"] = OPENAI_API_BASE
     env["HOME"] = os.path.expanduser("~")
     env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
 
     cmd = [
-        "claude",
-        "-p", message,
-        "--output-format", "json",
-        "--max-turns", "20",
-        "--bare",
+        "interpreter",
+        "--print",
+        "--model", "deepseek-v4-flash",
+        "--api_base", OPENAI_API_BASE,
+        "--api_key", OPENAI_API_KEY,
+        message,
     ]
 
     try:
-        logger.info(f"Running: {' '.join(cmd[:3])}...")
+        logger.info(f"Running interpreter...")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -53,19 +54,15 @@ def call_claude(message: str, timeout: int = 300) -> str:
 
         if result.returncode != 0:
             error_msg = result.stderr[:500] if result.stderr else "No stderr"
+            # Fallback: try without --print
             return f"Error (code {result.returncode}): {error_msg}"
 
-        # Parse JSON response
-        try:
-            data = json.loads(result.stdout)
-            return data.get("result", result.stdout[:2000])
-        except json.JSONDecodeError:
-            return result.stdout[:2000] if result.stdout else "No response"
+        return result.stdout[:4000] if result.stdout else "No response"
 
     except subprocess.TimeoutExpired:
         return "Timeout - task took too long"
     except FileNotFoundError:
-        return "Error: claude command not found. Is Claude Code installed?"
+        return "Error: interpreter command not found. Is Open Interpreter installed?"
     except Exception as e:
         return f"Error: {str(e)[:200]}"
 
@@ -73,8 +70,6 @@ def call_claude(message: str, timeout: int = 300) -> str:
 def main():
     """Simple Telegram bot using polling."""
     import urllib.request
-    import urllib.parse
-    import time
 
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN not set!")
@@ -85,7 +80,7 @@ def main():
 
     logger.info("Phantom Bot started!")
     logger.info(f"Workdir: {WORKDIR}")
-    logger.info(f"ANTHROPIC_BASE_URL: {ANTHROPIC_BASE_URL}")
+    logger.info(f"OPENAI_API_BASE: {OPENAI_API_BASE}")
 
     while True:
         try:
@@ -119,7 +114,6 @@ def main():
                 try:
                     typing_url = f"{API_BASE}/sendChatAction"
                     typing_data = json.dumps({"chat_id": chat_id, "action": "typing"}).encode()
-                    urllib.request.Request(typing_url, data=typing_data, headers={"Content-Type": "application/json"})
                     urllib.request.urlopen(urllib.request.Request(
                         typing_url,
                         data=typing_data,
@@ -128,15 +122,14 @@ def main():
                 except:
                     pass
 
-                # Call Claude Code
-                response = call_claude(text)
+                # Call Open Interpreter
+                response = call_interpreter(text)
 
                 # Send response
                 send_url = f"{API_BASE}/sendMessage"
                 send_data = json.dumps({
                     "chat_id": chat_id,
                     "text": response[:4000],
-                    "parse_mode": "Markdown",
                 }).encode()
 
                 try:
@@ -145,17 +138,8 @@ def main():
                         data=send_data,
                         headers={"Content-Type": "application/json"}
                     ), timeout=10)
-                except:
-                    # Retry without markdown
-                    send_data = json.dumps({
-                        "chat_id": chat_id,
-                        "text": response[:4000],
-                    }).encode()
-                    urllib.request.urlopen(urllib.request.Request(
-                        send_url,
-                        data=send_data,
-                        headers={"Content-Type": "application/json"}
-                    ), timeout=10)
+                except Exception as e:
+                    logger.error(f"Failed to send: {e}")
 
                 logger.info(f"Response sent to {chat_id}")
 
