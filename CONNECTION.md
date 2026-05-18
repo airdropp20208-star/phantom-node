@@ -1,2 +1,2 @@
-SSH: ssh runner@https://encoding-roger-showcase-radiation.trycloudflare.com
+SSH: ssh runner@https://occupation-rna-leader-obtained.trycloudflare.com
 Password: phantom123
