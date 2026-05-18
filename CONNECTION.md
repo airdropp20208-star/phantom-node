@@ -1,2 +1,2 @@
-SSH: ssh runner@https://vcr-way-axis-mention.trycloudflare.com
+SSH: ssh runner@https://trailers-projects-render-son.trycloudflare.com
 Password: phantom123
