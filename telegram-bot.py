@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Phantom Node v5 - Full Control
-No auth, direct shell access
+Phantom Node v6 - Chat + Shell + File Transfer
 """
 import os
 import json
@@ -92,8 +91,38 @@ def tg_request(method, data=None, timeout=10):
         return json.loads(resp.read())
 
 
+def tg_upload(method, file_path, chat_id, caption=""):
+    """Upload file to Telegram"""
+    import mimetypes
+    boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+    
+    filename = os.path.basename(file_path)
+    mime_type = mimetypes.guess_type(file_path)[0] or "application/octet-stream"
+    
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+    
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="chat_id"\r\n\r\n'
+        f"{chat_id}\r\n"
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="caption"\r\n\r\n'
+        f"{caption}\r\n"
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="document"; filename="{filename}"\r\n'
+        f"Content-Type: {mime_type}\r\n\r\n"
+    ).encode() + file_data + f"\r\n--{boundary}--\r\n".encode()
+    
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
+    req = urllib.request.Request(url, data=body)
+    req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+    
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        return json.loads(resp.read())
+
+
 def send_msg(chat_id, text):
-    """Send message, split if > 4096 chars"""
     if len(text) <= 4096:
         try:
             tg_request("sendMessage", {"chat_id": chat_id, "text": text})
@@ -107,13 +136,40 @@ def send_msg(chat_id, text):
                 log.error(f"Send chunk failed: {e}")
 
 
+def handle_document(chat_id, document):
+    """Handle file upload from user"""
+    file_id = document.get("file_id")
+    file_name = document.get("file_name", "unknown")
+    file_size = document.get("file_size", 0)
+    
+    if file_size > 50 * 1024 * 1024:  # 50MB limit
+        send_msg(chat_id, "⚠️ File quá lớn (max 50MB)")
+        return
+    
+    # Get file path
+    try:
+        file_info = tg_request("getFile", {"file_id": file_id})
+        file_path = file_info["result"]["file_path"]
+        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        
+        # Download to /tmp
+        local_path = f"/tmp/{file_name}"
+        urllib.request.urlretrieve(download_url, local_path)
+        
+        send_msg(chat_id, f"✅ Đã nhận: {file_name} ({file_size} bytes)\nĐường dẫn: {local_path}")
+        log.info(f"Received file: {file_name} -> {local_path}")
+    except Exception as e:
+        send_msg(chat_id, f"⚠️ Lỗi nhận file: {str(e)[:100]}")
+        log.error(f"File download error: {e}")
+
+
 def main():
     if not BOT_TOKEN or not API_KEY:
         log.error("Missing BOT_TOKEN or API_KEY!")
         return
 
     allowed = set(int(cid.strip()) for cid in ALLOWED_CHATS.split(",") if cid.strip())
-    log.info(f"Bot v5 started! Model: {MODEL}")
+    log.info(f"Bot v6 started! Model: {MODEL}")
     log.info(f"Allowed chats: {allowed or 'ALL'}")
 
     # Skip old messages
@@ -137,12 +193,21 @@ def main():
 
                 chat_id = msg["chat"]["id"]
                 text = msg.get("text", "")
+                
+                # Handle file uploads
+                if msg.get("document"):
+                    if allowed and chat_id not in allowed:
+                        continue
+                    handle_document(chat_id, msg["document"])
+                    continue
+                
                 if not text or msg.get("from", {}).get("is_bot"):
                     continue
 
                 if allowed and chat_id not in allowed:
                     continue
 
+                # Rate limit
                 now = time.time()
                 if chat_id in last_response and now - last_response[chat_id] < RATE_LIMIT:
                     continue
@@ -150,7 +215,7 @@ def main():
 
                 log.info(f"[{chat_id}] {text[:80]}")
 
-                # Try typing
+                # Typing
                 try:
                     tg_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
                 except Exception:
@@ -165,10 +230,10 @@ def main():
                     continue
 
                 if lower == "/start":
-                    send_msg(chat_id, "🤖 PhantomBot v5 - Full Control\n\n!cmd <lệnh> - chạy lệnh\n!scan - thông tin hệ thống\n!net - mạng\n!ps - processes\n!disk - ổ đĩa\n!whoami - user info\n!env - environment\n!python <code> - chạy Python\n!sh <script> - chạy shell script\n\nHoặc chat bình thường")
+                    send_msg(chat_id, "🤖 PhantomBot v6\n\nLệnh:\n!cmd <lệnh> - chạy lệnh\n!scan - thông tin hệ thống\n!net - mạng\n!ps - processes\n!disk - ổ đĩa\n!whoami - user info\n!env - environment\n!python <code> - chạy Python\n!sh <script> - chạy shell script\n!upload <đường dẫn> - gửi file\n\nGửi file để lưu vào /tmp/")
                     continue
 
-                # Shell commands - NO AUTH
+                # Shell commands
                 if lower.startswith("!cmd "):
                     cmd = text[5:].strip()
                     output = run_shell(cmd)
@@ -215,6 +280,29 @@ def main():
                     script = text[4:].strip()
                     output = run_shell(script, timeout=30)
                     send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                # File upload command
+                if lower.startswith("!upload "):
+                    file_path = text[8:].strip()
+                    if not file_path.startswith("/"):
+                        file_path = f"/tmp/{file_path}"
+                    
+                    if not os.path.exists(file_path):
+                        send_msg(chat_id, f"❌ File không tồn tại: {file_path}")
+                        continue
+                    
+                    file_size = os.path.getsize(file_path)
+                    if file_size > 50 * 1024 * 1024:
+                        send_msg(chat_id, "⚠️ File quá lớn (max 50MB)")
+                        continue
+                    
+                    try:
+                        send_msg(chat_id, f"📤 Đang gửi: {file_path} ({file_size} bytes)...")
+                        tg_upload("sendDocument", file_path, chat_id, f"📁 {os.path.basename(file_path)}")
+                        send_msg(chat_id, "✅ Đã gửi!")
+                    except Exception as e:
+                        send_msg(chat_id, f"⚠️ Lỗi gửi file: {str(e)[:100]}")
                     continue
 
                 # === AI CHAT ===
