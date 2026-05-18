@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Phantom Node v4 - Chat + Shell Execution
-Can run commands on GitHub Actions runner
+Phantom Node v5 - Full Control
+No auth, direct shell access
 """
 import os
 import json
@@ -16,7 +16,6 @@ API_KEY = os.environ.get("API_KEY", "")
 API_BASE = os.environ.get("API_BASE", "https://api.xiaomimimo.com/v1")
 MODEL = os.environ.get("MODEL", "mimo-v2.5")
 ALLOWED_CHATS = os.environ.get("ALLOWED_CHATS", "")
-SHELL_PASSWORD = os.environ.get("SHELL_PASSWORD", "phantom123")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("phantom")
@@ -32,24 +31,20 @@ SYSTEM_PROMPT = (
 )
 
 last_response = {}
-RATE_LIMIT = 3
+RATE_LIMIT = 2
 
 
 def run_shell(cmd, timeout=30):
-    """Execute shell command and return output"""
     try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
-        )
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
         output = result.stdout + result.stderr
         if not output:
             return "(no output)"
-        # Truncate long output
-        if len(output) > 1500:
-            output = output[:1497] + "..."
+        if len(output) > 2000:
+            output = output[:1997] + "..."
         return output.strip()
     except subprocess.TimeoutExpired:
-        return "⚠️ Command timed out"
+        return "⚠️ Timeout"
     except Exception as e:
         return f"⚠️ Error: {str(e)[:200]}"
 
@@ -70,10 +65,7 @@ def api_chat(message, history=None):
     req = urllib.request.Request(
         f"{API_BASE}/chat/completions",
         data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {API_KEY}",
-        },
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {API_KEY}"},
     )
 
     try:
@@ -85,10 +77,6 @@ def api_chat(message, history=None):
         if len(content) > 800:
             content = content[:797] + "..."
         return content.strip()
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace")[:200]
-        log.error(f"API HTTP {e.code}: {body}")
-        return f"⚠️ API error {e.code}"
     except Exception as e:
         log.error(f"API error: {e}")
         return "⚠️ API error"
@@ -104,53 +92,19 @@ def tg_request(method, data=None, timeout=10):
         return json.loads(resp.read())
 
 
-def handle_command(chat_id, text):
-    """Handle special commands"""
-    lower = text.lower().strip()
-
-    # Shell unlock
-    if lower.startswith("!auth "):
-        password = text[6:].strip()
-        if password == SHELL_PASSWORD:
-            return "✅ Shell access granted. Dùng !cmd <lệnh> để chạy"
-        return "❌ Sai password"
-
-    # Shell execution
-    if lower.startswith("!cmd "):
-        cmd = text[5:].strip()
-        if not cmd:
-            return "❌ Thiếu lệnh"
-        log.info(f"Executing: {cmd}")
-        output = run_shell(cmd)
-        return f"```\n{output}\n```"
-
-    # Quick commands
-    if lower == "!scan":
-        output = run_shell("uname -a && whoami && pwd && df -h / && free -h")
-        return f"```\n{output}\n```"
-
-    if lower == "!net":
-        output = run_shell("ip addr show 2>/dev/null || ifconfig")
-        return f"```\n{output}\n```"
-
-    if lower == "!ps":
-        output = run_shell("ps aux --sort=-%mem | head -15")
-        return f"```\n{output}\n```"
-
-    if lower == "!disk":
-        output = run_shell("df -h && echo '---' && du -sh /* 2>/dev/null | sort -rh | head -10")
-        return f"```\n{output}\n```"
-
-    if lower in ("/clear", "/reset"):
-        return "__CLEAR__"
-
-    if lower == "/start":
-        return "🤖 PhantomBot v4\n\nLệnh:\n!scan - thông tin máy\n!net - mạng\n!ps - processes\n!disk - ổ đĩa\n!cmd <lệnh> - chạy lệnh\n!auth <pw> - mở shell"
-
-    if lower == "/status":
-        return f"🤖 Model: {MODEL}\n📡 API: {API_BASE}\n🔐 Shell: locked"
-
-    return None  # Not a command
+def send_msg(chat_id, text):
+    """Send message, split if > 4096 chars"""
+    if len(text) <= 4096:
+        try:
+            tg_request("sendMessage", {"chat_id": chat_id, "text": text})
+        except Exception as e:
+            log.error(f"Send failed: {e}")
+    else:
+        for i in range(0, len(text), 4096):
+            try:
+                tg_request("sendMessage", {"chat_id": chat_id, "text": text[i:i+4096]})
+            except Exception as e:
+                log.error(f"Send chunk failed: {e}")
 
 
 def main():
@@ -159,18 +113,14 @@ def main():
         return
 
     allowed = set(int(cid.strip()) for cid in ALLOWED_CHATS.split(",") if cid.strip())
-    log.info(f"Bot v4 started! Model: {MODEL}")
+    log.info(f"Bot v5 started! Model: {MODEL}")
     log.info(f"Allowed chats: {allowed or 'ALL'}")
 
     # Skip old messages
-    log.info("Skipping old messages...")
     try:
         result = tg_request("getUpdates", {"offset": -1, "timeout": 1}, timeout=5)
-        if result.get("result"):
-            offset = result["result"][-1]["update_id"] + 1
-            log.info(f"Skipped to offset {offset}")
-        else:
-            offset = 0
+        offset = result["result"][-1]["update_id"] + 1 if result.get("result") else 0
+        log.info(f"Skipped to offset {offset}")
     except Exception:
         offset = 0
 
@@ -187,16 +137,12 @@ def main():
 
                 chat_id = msg["chat"]["id"]
                 text = msg.get("text", "")
-                if not text:
-                    continue
-
-                if msg.get("from", {}).get("is_bot"):
+                if not text or msg.get("from", {}).get("is_bot"):
                     continue
 
                 if allowed and chat_id not in allowed:
                     continue
 
-                # Rate limit
                 now = time.time()
                 if chat_id in last_response and now - last_response[chat_id] < RATE_LIMIT:
                     continue
@@ -204,27 +150,74 @@ def main():
 
                 log.info(f"[{chat_id}] {text[:80]}")
 
-                # Handle commands first
-                cmd_result = handle_command(chat_id, text)
-                if cmd_result == "__CLEAR__":
-                    history.pop(chat_id, None)
-                    tg_request("sendMessage", {"chat_id": chat_id, "text": "✅ Reset"})
-                    continue
-
-                if cmd_result:
-                    try:
-                        tg_request("sendMessage", {"chat_id": chat_id, "text": cmd_result, "parse_mode": "Markdown"})
-                    except Exception:
-                        tg_request("sendMessage", {"chat_id": chat_id, "text": cmd_result})
-                    continue
-
-                # Typing
+                # Try typing
                 try:
                     tg_request("sendChatAction", {"chat_id": chat_id, "action": "typing"})
                 except Exception:
                     pass
 
-                # Chat with AI
+                lower = text.lower().strip()
+
+                # === COMMANDS ===
+                if lower in ("/clear", "/reset"):
+                    history.pop(chat_id, None)
+                    send_msg(chat_id, "✅ Reset")
+                    continue
+
+                if lower == "/start":
+                    send_msg(chat_id, "🤖 PhantomBot v5 - Full Control\n\n!cmd <lệnh> - chạy lệnh\n!scan - thông tin hệ thống\n!net - mạng\n!ps - processes\n!disk - ổ đĩa\n!whoami - user info\n!env - environment\n!python <code> - chạy Python\n!sh <script> - chạy shell script\n\nHoặc chat bình thường")
+                    continue
+
+                # Shell commands - NO AUTH
+                if lower.startswith("!cmd "):
+                    cmd = text[5:].strip()
+                    output = run_shell(cmd)
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower == "!scan":
+                    output = run_shell("uname -a && whoami && pwd && echo '---DISK---' && df -h / && echo '---MEM---' && free -h && echo '---CPU---' && nproc && cat /proc/cpuinfo | grep 'model name' | head -1")
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower == "!net":
+                    output = run_shell("ip addr show 2>/dev/null || ifconfig && echo '---ROUTES---' && ip route && echo '---DNS---' && cat /etc/resolv.conf 2>/dev/null")
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower == "!ps":
+                    output = run_shell("ps aux --sort=-%mem | head -20")
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower == "!disk":
+                    output = run_shell("df -h && echo '===LARGE FILES===' && find / -type f -size +10M 2>/dev/null | head -20")
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower == "!whoami":
+                    output = run_shell("whoami && id && hostname && cat /etc/os-release 2>/dev/null | head -5")
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower == "!env":
+                    output = run_shell("env | sort")
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower.startswith("!python "):
+                    code = text[9:].strip()
+                    output = run_shell(f"python3 -c '{code}'", timeout=15)
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                if lower.startswith("!sh "):
+                    script = text[4:].strip()
+                    output = run_shell(script, timeout=30)
+                    send_msg(chat_id, f"```\n{output}\n```")
+                    continue
+
+                # === AI CHAT ===
                 if chat_id not in history:
                     history[chat_id] = []
                 history[chat_id].append({"role": "user", "content": text})
@@ -235,11 +228,7 @@ def main():
                 if len(history[chat_id]) > 12:
                     history[chat_id] = history[chat_id][-12:]
 
-                try:
-                    tg_request("sendMessage", {"chat_id": chat_id, "text": response})
-                except Exception as e:
-                    log.error(f"Send failed: {e}")
-
+                send_msg(chat_id, response)
                 log.info(f"Sent to {chat_id} ({len(response)} chars)")
 
         except KeyboardInterrupt:
