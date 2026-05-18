@@ -178,7 +178,7 @@ jobs:
         run: |
           nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid
           sleep 10
-          curl -s http://localhost:20128 > /dev/null && echo "9router running" || echo "9router starting..."
+          if ss -tlnp | grep -q ':20128'; then echo "9router running"; else echo "9router starting..."; fi
 
       - name: Start Gateway
         run: |
@@ -216,7 +216,7 @@ jobs:
         run: |
           echo "=== Status ==="
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
-          curl -s http://localhost:20128 > /dev/null && echo "9router: OK" || echo "9router: FAIL"
+          ss -tlnp | grep -q ':20128' && echo "9router: OK" || echo "9router: FAIL"
           command -v claude > /dev/null && echo "claude: OK" || echo "claude: FAIL"
           command -v hermes > /dev/null && echo "hermes: OK" || echo "hermes: FAIL"
           echo "Flow: Telegram -> Hermes -> Claude Code -> 9router -> ds2api -> DeepSeek"
@@ -229,7 +229,7 @@ jobs:
               echo "[$TIMESTAMP] ds2api down, restarting..."
               cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
             fi
-            if ! curl -s http://localhost:20128 > /dev/null 2>&1; then
+            if ! ss -tlnp | grep -q ':20128'; then
               echo "[$TIMESTAMP] 9router down, restarting..."
               nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid
             fi
