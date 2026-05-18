@@ -1,2 +1,2 @@
-SSH: ssh runner@https://johnston-unions-pine-beaches.trycloudflare.com
+SSH: ssh runner@https://encoding-roger-showcase-radiation.trycloudflare.com
 Password: phantom123
