@@ -1,2 +1,2 @@
-SSH: ssh runner@https://duck-opposite-lease-passion.trycloudflare.com
+SSH: ssh runner@https://okay-jets-carnival-stress.trycloudflare.com
 Password: phantom123
