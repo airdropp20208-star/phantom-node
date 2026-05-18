@@ -2,10 +2,6 @@ name: Deploy Phantom Node
 on:
   workflow_dispatch:
     inputs:
-      api_key:
-        description: "Xiaomi Mimo API Key"
-        required: false
-        default: ""
       deepseek_email:
         description: "DeepSeek Email"
         required: false
@@ -27,10 +23,6 @@ jobs:
         with:
           node-version: '20'
 
-      - uses: actions/setup-python@v4
-        with:
-          python-version: '3.11'
-
       - name: Install ds2api
         run: |
           curl -L -o ds2api.tar.gz "https://github.com/CJackHwang/ds2api/releases/download/v4.6.1/ds2api_v4.6.1_linux_amd64.tar.gz"
@@ -42,9 +34,6 @@ jobs:
 
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code && echo "claude OK"
-
-      - name: Install Hermes
-        run: pip install --upgrade pip && pip install hermes-agent && echo "hermes OK"
 
       - name: Configure ds2api
         env:
@@ -63,110 +52,14 @@ jobs:
           echo "9router configured"
 
       - name: Configure Claude Code
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
           mkdir -p ~/.claude
-          echo 'export ANTHROPIC_BASE_URL=http://localhost:20128/v1' >> ~/.bashrc
-          echo 'export ANTHROPIC_API_KEY=sk-phantom' >> ~/.bashrc
-          # Auto-trust workspace for Claude Code
-          printf '{"permissions":{"allow":["Bash(*)","Read","Write","Edit"]}}\n' > ~/.claude/settings.json
+          cat > ~/.claude/settings.json << 'CCEOF'
+          {"permissions":{"allow":["Bash(*)","Read","Write","Edit","WebSearch","WebFetch"]}}
+          CCEOF
           echo "claude configured"
-
-      - name: Configure Hermes
-        env:
-          API_KEY: ${{ github.event.inputs.api_key }}
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          XIAOMI_KEY: ${{ secrets.API_KEY }}
-        run: |
-          XM_KEY="${API_KEY:-${XIAOMI_KEY:-YOUR_KEY_HERE}}"
-          mkdir -p ~/.hermes
-          printf "XIAOMI_API_KEY=%s\n" "$XM_KEY" > ~/.hermes/.env
-          echo "GATEWAY_ALLOW_ALL_USERS=true" >> ~/.hermes/.env
-          echo "ANTHROPIC_BASE_URL=http://localhost:20128/v1" >> ~/.hermes/.env
-          echo "ANTHROPIC_API_KEY=sk-phantom" >> ~/.hermes/.env
-          BOT="$BOT_TOKEN"
-          cat > ~/.hermes/config.yaml << CFGEOF
-          model:
-            default: mimo-v2.5
-            provider: xiaomi
-            base_url: https://api.xiaomimimo.com/v1
-          providers: {}
-          fallback_providers: []
-          toolsets:
-          - hermes-cli
-          agent:
-            max_turns: 90
-            gateway_timeout: 1800
-            api_max_retries: 3
-            tool_use_enforcement: auto
-            disabled_toolsets: []
-          terminal:
-            backend: local
-            timeout: 300
-            persistent_shell: true
-            env_passthrough:
-            - ANTHROPIC_BASE_URL
-            - ANTHROPIC_API_KEY
-            - HOME
-          display:
-            personality: kawaii
-            language: vi
-          security:
-            allow_private_urls: true
-            redact_secrets: true
-            allow_lazy_installs: true
-          memory:
-            memory_enabled: true
-            user_profile_enabled: true
-          context:
-            engine: compressor
-          compression:
-            enabled: true
-          telegram:
-            bot_token: $BOT
-            allowed_chats: '*'
-            reactions: false
-            channel_prompts: {}
-          platform_toolsets:
-            cli:
-            - browser
-            - clarify
-            - code_execution
-            - cronjob
-            - delegation
-            - file
-            - memory
-            - session_search
-            - skills
-            - terminal
-            - todo
-            - vision
-            - web
-            telegram:
-            - browser
-            - clarify
-            - code_execution
-            - cronjob
-            - delegation
-            - file
-            - memory
-            - session_search
-            - skills
-            - terminal
-            - todo
-            - vision
-            - web
-          _config_version: 23
-          CFGEOF
-          # Create CLAUDE.md that tells Hermes to delegate coding to Claude Code
-          cat > ~/.hermes/CLAUDE.md << 'CLAUDEOF'
-          You are Hermes Agent on a Phantom Node VPS.
-          When the user asks you to code, write, fix, or modify files and code, you MUST delegate to Claude Code using:
-          delegate_task(goal="task description", toolsets=["terminal", "file"], acp_command="claude", acp_args=["--acp", "--stdio"])
-          Claude Code has ANTHROPIC_BASE_URL=localhost:20128 and ANTHROPIC_API_KEY=sk-phantom.
-          Claude Code flows through 9router (20128) -> ds2api (5001) -> DeepSeek (FREE).
-          Always delegate coding tasks. Do NOT try to code yourself.
-          CLAUDEOF
-          echo "hermes configured"
 
       - name: Start ds2api
         run: |
@@ -180,14 +73,16 @@ jobs:
           sleep 10
           if ss -tlnp | grep -q ':20128'; then echo "9router running"; else echo "9router starting..."; fi
 
-      - name: Start Gateway
+      - name: Start Telegram Bot
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          ALLOWED_USERS: "7563947218"
+          ANTHROPIC_BASE_URL: "http://localhost:20128/v1"
+          ANTHROPIC_API_KEY: "sk-phantom"
         run: |
-          source ~/.bashrc
-          export ANTHROPIC_BASE_URL=http://localhost:20128/v1
-          export ANTHROPIC_API_KEY=sk-phantom
-          nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
-          sleep 10
-          kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
+          nohup python3 telegram-bot.py > telegram-bot.log 2>&1 & echo $! > telegram-bot.pid
+          sleep 5
+          kill -0 $(cat telegram-bot.pid) 2>/dev/null && echo "telegram bot running" || echo "telegram bot starting..."
 
       - name: Setup SSH
         run: |
@@ -218,8 +113,8 @@ jobs:
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
           ss -tlnp | grep -q ':20128' && echo "9router: OK" || echo "9router: FAIL"
           command -v claude > /dev/null && echo "claude: OK" || echo "claude: FAIL"
-          command -v hermes > /dev/null && echo "hermes: OK" || echo "hermes: FAIL"
-          echo "Flow: Telegram -> Hermes -> Claude Code -> 9router -> ds2api -> DeepSeek"
+          kill -0 $(cat telegram-bot.pid 2>/dev/null) 2>/dev/null && echo "telegram-bot: OK" || echo "telegram-bot: FAIL"
+          echo "Flow: Telegram -> Claude Code -> 9router -> ds2api -> DeepSeek"
 
       - name: Keep Alive
         run: |
@@ -233,12 +128,9 @@ jobs:
               echo "[$TIMESTAMP] 9router down, restarting..."
               nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid
             fi
-            if ! kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$TIMESTAMP] gateway down, restarting..."
-              source ~/.bashrc
-              export ANTHROPIC_BASE_URL=http://localhost:20128/v1
-              export ANTHROPIC_API_KEY=sk-phantom
-              nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
+            if ! kill -0 $(cat telegram-bot.pid 2>/dev/null) 2>/dev/null; then
+              echo "[$TIMESTAMP] telegram bot down, restarting..."
+              nohup python3 telegram-bot.py > telegram-bot.log 2>&1 & echo $! > telegram-bot.pid
             fi
             if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TIMESTAMP] tunnel down, restarting..."
