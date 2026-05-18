@@ -40,25 +40,63 @@ jobs:
         run: |
           EMAIL="${DS_EMAIL:-tooltdshaha00001@gmail.com}"
           PASS="${DS_PASSWORD:-son22tq2011}"
-          printf '{"keys":["sk-phantom"],"accounts":[{"email":"%s","password":"%s"}],"model_aliases":{"gpt-4o":"deepseek-v4-pro-nothinking","gpt-4o-mini":"deepseek-v4-flash"},"runtime":{"account_max_inflight":2,"token_refresh_interval_hours":6}}\n' "$EMAIL" "$PASS" > ds2api/config.json
-          echo "ds2api configured"
+          python3 -c "
+          import json
+          config = {
+              'keys': ['sk-phantom'],
+              'accounts': [{'email': '${EMAIL}', 'password': '${PASS}'}],
+              'model_aliases': {
+                  'gpt-4o': 'deepseek-v4-pro-nothinking',
+                  'gpt-4o-mini': 'deepseek-v4-flash'
+              },
+              'runtime': {
+                  'account_max_inflight': 2,
+                  'token_refresh_interval_hours': 6
+              }
+          }
+          with open('ds2api/config.json', 'w') as f:
+              json.dump(config, f, indent=2)
+          print('ds2api configured')
+          "
 
       - name: Start ds2api
         run: |
           cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
-          sleep 5
-          curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api starting..."
+          echo "Waiting for ds2api to start..."
+          for i in $(seq 1 30); do
+            if curl -s http://localhost:5001/healthz > /dev/null 2>&1; then
+              echo "ds2api ready after ${i}s"
+              break
+            fi
+            sleep 1
+          done
+          curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api NOT running"
 
       - name: Test DeepSeek V4
         run: |
+          echo "Testing ds2api..."
           python3 -c "
-          import urllib.request, json
-          payload = json.dumps({'model':'deepseek-v4-pro-nothinking','messages':[{'role':'user','content':'Say hello'}],'max_tokens':50}).encode()
-          req = urllib.request.Request('http://localhost:5001/v1/chat/completions', data=payload, headers={'Content-Type':'application/json','Authorization':'Bearer sk-phantom'})
-          with urllib.request.urlopen(req, timeout=30) as r:
-              d = json.loads(r.read())
-              print('DeepSeek V4 OK:', d['choices'][0]['message']['content'][:100])
+          import urllib.request, json, time
+          payload = json.dumps({
+              'model': 'deepseek-v4-pro-nothinking',
+              'messages': [{'role': 'user', 'content': 'Say hello in 5 words'}],
+              'max_tokens': 50
+          }).encode()
+          headers = {'Content-Type': 'application/json', 'Authorization': 'Bearer sk-phantom'}
+          for attempt in range(5):
+              try:
+                  req = urllib.request.Request('http://localhost:5001/v1/chat/completions', data=payload, headers=headers)
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      d = json.loads(r.read())
+                      print('DeepSeek V4 OK:', d['choices'][0]['message']['content'][:100])
+                      exit(0)
+              except Exception as e:
+                  print(f'Attempt {attempt+1}/5 failed: {e}')
+                  time.sleep(10)
+          exit(1)
           "
+          echo "--- ds2api logs ---"
+          tail -20 ds2api.log
 
       - name: Start Telegram Bot
         env:
@@ -67,7 +105,7 @@ jobs:
         run: |
           nohup python3 telegram-bot.py > bot.log 2>&1 & echo $! > bot.pid
           sleep 3
-          kill -0 $(cat bot.pid) 2>/dev/null && echo "bot running" || (echo "bot failed:" && cat bot.log)
+          kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot running" || (echo "bot failed:" && cat bot.log)
 
       - name: Setup SSH
         run: |
@@ -95,7 +133,7 @@ jobs:
           echo "=== Status ==="
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
-          echo "Flow: Telegram → Bot → ds2api(:5001) → DeepSeek V4 (FREE)"
+          echo "Flow: Telegram -> Bot -> Open Interpreter -> ds2api(:5001) -> DeepSeek V4 (FREE)"
 
       - name: Keep Alive
         run: |
@@ -104,6 +142,7 @@ jobs:
             curl -s http://localhost:5001/healthz > /dev/null 2>&1 || {
               echo "[$TS] ds2api down, restarting..."
               cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
+              sleep 10
             }
             kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] bot down, restarting..."
