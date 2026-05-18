@@ -26,17 +26,18 @@ def call_claude(message: str, timeout: int = 300) -> str:
     env["ANTHROPIC_BASE_URL"] = ANTHROPIC_BASE_URL
     env["ANTHROPIC_API_KEY"] = ANTHROPIC_API_KEY
     env["HOME"] = os.path.expanduser("~")
+    env["PATH"] = "/usr/local/bin:/usr/bin:/bin:" + env.get("PATH", "")
 
     cmd = [
         "claude",
         "-p", message,
         "--output-format", "json",
         "--max-turns", "20",
-        "--allowedTools", "Bash,Read,Write,Edit,WebSearch,WebFetch",
         "--bare",
     ]
 
     try:
+        logger.info(f"Running: {' '.join(cmd[:3])}...")
         result = subprocess.run(
             cmd,
             capture_output=True,
@@ -46,8 +47,13 @@ def call_claude(message: str, timeout: int = 300) -> str:
             env=env,
         )
 
+        logger.info(f"Exit code: {result.returncode}")
+        if result.stderr:
+            logger.info(f"Stderr: {result.stderr[:500]}")
+
         if result.returncode != 0:
-            return f"Error: {result.stderr[:500] if result.stderr else 'Unknown error'}"
+            error_msg = result.stderr[:500] if result.stderr else "No stderr"
+            return f"Error (code {result.returncode}): {error_msg}"
 
         # Parse JSON response
         try:
@@ -58,6 +64,8 @@ def call_claude(message: str, timeout: int = 300) -> str:
 
     except subprocess.TimeoutExpired:
         return "Timeout - task took too long"
+    except FileNotFoundError:
+        return "Error: claude command not found. Is Claude Code installed?"
     except Exception as e:
         return f"Error: {str(e)[:200]}"
 
