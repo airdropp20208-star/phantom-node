@@ -3,11 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       deepseek_email:
-        description: "DeepSeek Email (leave empty for default)"
+        description: "DeepSeek Email"
         required: false
         default: ""
       deepseek_password:
-        description: "DeepSeek Password (leave empty for default)"
+        description: "DeepSeek Password"
         required: false
         default: ""
 permissions:
@@ -27,7 +27,6 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ── Install ──────────────────────────────────────────
       - name: Install ds2api
         run: |
           curl -L -o ds2api.tar.gz "https://github.com/CJackHwang/ds2api/releases/download/v4.6.1/ds2api_v4.6.1_linux_amd64.tar.gz"
@@ -41,123 +40,31 @@ jobs:
       - name: Install Hermes
         run: pip install hermes-agent && echo "hermes OK"
 
-      # ── Configure ────────────────────────────────────────
       - name: Configure ds2api
         env:
-          DS_EMAIL: ${{ secrets.DS_EMAIL }}
-          DS_PASSWORD: ${{ secrets.DS_PASSWORD }}
+          DS_EMAIL: ${{ github.event.inputs.deepseek_email }}
+          DS_PASSWORD: ${{ github.event.inputs.deepseek_password }}
         run: |
-          EMAIL="${DS_EMAIL}"
-          PASS="${DS_PASSWORD}" 
-          {
-            "keys": ["$DS2API_KEY"],
-            "accounts": [{"email": "$DS_EMAIL", "password": "$DS_PASSWORD"}],
-            "model_aliases": {
-              "gpt-4o": "deepseek-v4-pro-nothinking",
-              "gpt-4o-mini": "deepseek-v4-flash",
-              "claude-sonnet-4-6": "deepseek-v4-pro-nothinking",
-              "claude-opus-4-6": "deepseek-v4-pro-nothinking"
-            },
-            "runtime": {
-              "account_max_inflight": 2,
-              "token_refresh_interval_hours": 6
-            }
-          }
-          EOF
+          EMAIL="${DS_EMAIL:-tooltdshaha00001@gmail.com}"
+          PASS="${DS_PASSWORD:-son22tq2011}"
+          printf '{"keys":["sk-phantom"],"accounts":[{"email":"%s","password":"%s"}],"model_aliases":{"gpt-4o":"deepseek-v4-pro-nothinking","gpt-4o-mini":"deepseek-v4-flash","claude-sonnet-4-6":"deepseek-v4-pro-nothinking","claude-opus-4-6":"deepseek-v4-pro-nothinking"},"runtime":{"account_max_inflight":2,"token_refresh_interval_hours":6}}\n' "$EMAIL" "$PASS" > ds2api/config.json
           echo "ds2api configured"
 
       - name: Configure Claude Code
         run: |
           mkdir -p ~/.claude
-          cat > ~/.claude/settings.json << 'EOF'
-          {"permissions":{"allow":["Bash(*)","Read","Write","Edit"]}}
-          EOF
+          printf '{"permissions":{"allow":["Bash(*)","Read","Write","Edit"]}}\n' > ~/.claude/settings.json
           echo "claude configured"
 
       - name: Configure Hermes
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          DS2API_KEY: ${{ secrets.DS2API_KEY }}
         run: |
           mkdir -p ~/.hermes
-          cat > ~/.hermes/.env << EOF
-          OPENAI_API_KEY=$DS2API_KEY
-          OPENAI_API_BASE=http://localhost:5001/v1
-          BOT_TOKEN=$BOT_TOKEN
-          EOF
-
-          cat > ~/.hermes/config.yaml << EOF
-          model:
-            default: deepseek-v4-pro-nothinking
-            provider: openai
-            base_url: http://localhost:5001/v1
-          providers: {}
-          fallback_providers: []
-          toolsets:
-          - hermes-cli
-          agent:
-            max_turns: 90
-            gateway_timeout: 1800
-            api_max_retries: 3
-            tool_use_enforcement: auto
-            disabled_toolsets: []
-          terminal:
-            backend: local
-            timeout: 300
-            persistent_shell: true
-          display:
-            personality: kawaii
-            language: vi
-          security:
-            allow_private_urls: true
-            redact_secrets: true
-            allow_lazy_installs: true
-          memory:
-            memory_enabled: true
-            user_profile_enabled: true
-          context:
-            engine: compressor
-          compression:
-            enabled: true
-          telegram:
-            bot_token: $BOT_TOKEN
-            allowed_chats: '*'
-            reactions: false
-            channel_prompts: {}
-          platform_toolsets:
-            cli:
-            - browser
-            - clarify
-            - code_execution
-            - cronjob
-            - delegation
-            - file
-            - memory
-            - session_search
-            - skills
-            - terminal
-            - todo
-            - vision
-            - web
-            telegram:
-            - browser
-            - clarify
-            - code_execution
-            - cronjob
-            - delegation
-            - file
-            - memory
-            - session_search
-            - skills
-            - terminal
-            - todo
-            - vision
-            - web
-          _config_version: 23
-          EOF
+          printf "OPENAI_API_KEY=sk-phantom\nOPENAI_API_BASE=http://localhost:5001/v1\nBOT_TOKEN=%s\n" "$BOT_TOKEN" > ~/.hermes/.env
+          printf 'model:\n  default: deepseek-v4-pro-nothinking\n  provider: openai\n  base_url: http://localhost:5001/v1\nproviders: {}\nfallback_providers: []\ntoolsets:\n- hermes-cli\nagent:\n  max_turns: 90\n  gateway_timeout: 1800\n  api_max_retries: 3\n  tool_use_enforcement: auto\n  disabled_toolsets: []\nterminal:\n  backend: local\n  timeout: 300\n  persistent_shell: true\ndisplay:\n  personality: kawaii\n  language: vi\nsecurity:\n  allow_private_urls: true\n  redact_secrets: true\n  allow_lazy_installs: true\nmemory:\n  memory_enabled: true\n  user_profile_enabled: true\ncontext:\n  engine: compressor\ncompression:\n  enabled: true\ntelegram:\n  bot_token: "%s"\n  allowed_chats: "*"\n  reactions: false\n  channel_prompts: {}\nplatform_toolsets:\n  cli:\n  - browser\n  - clarify\n  - code_execution\n  - cronjob\n  - delegation\n  - file\n  - memory\n  - session_search\n  - skills\n  - terminal\n  - todo\n  - vision\n  - web\n  telegram:\n  - browser\n  - clarify\n  - code_execution\n  - cronjob\n  - delegation\n  - file\n  - memory\n  - session_search\n  - skills\n  - terminal\n  - todo\n  - vision\n  - web\n_config_version: 23\n' "$BOT_TOKEN" > ~/.hermes/config.yaml
           echo "hermes configured"
 
-      # ── Start Services ───────────────────────────────────
       - name: Start ds2api
         run: |
           cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
@@ -165,40 +72,35 @@ jobs:
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api starting..."
 
       - name: Start Gateway
-        env:
-          DS2API_KEY: ${{ secrets.DS2API_KEY }}
         run: |
           source ~/.bashrc
-          export OPENAI_API_KEY=$DS2API_KEY
+          export OPENAI_API_KEY=sk-phantom
           export OPENAI_API_BASE=http://localhost:5001/v1
           nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
           sleep 10
           kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
 
       - name: Setup SSH
-        env:
-          SSH_PASSWORD: ${{ secrets.SSH_PASSWORD }}
         run: |
           curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o /usr/local/bin/cloudflared
           chmod +x /usr/local/bin/cloudflared
           sudo apt-get update -qq && sudo apt-get install -y -qq openssh-server
           sudo systemctl start ssh
           sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
-          echo "runner:$SSH_PASSWORD" | sudo chpasswd
+          echo "runner:phantom123" | sudo chpasswd
           sudo systemctl restart ssh
           cloudflared tunnel --url ssh://localhost:22 > tunnel.log 2>&1 &
           echo $! > tunnel.pid
           sleep 15
           TUNNEL_URL=$(grep -o 'https://[^ ]*trycloudflare\.com' tunnel.log | head -1)
           if [ -n "$TUNNEL_URL" ]; then
-            echo "SSH: ssh runner@$TUNNEL_URL"
+            echo "SSH: ssh runner@$TUNNEL_URL (pass: phantom123)"
             echo "SSH: ssh runner@$TUNNEL_URL" > CONNECTION.md
-            echo "Password: $SSH_PASSWORD" >> CONNECTION.md
+            echo "Password: phantom123" >> CONNECTION.md
             git config user.email "bot@phantom-node" && git config user.name "Bot"
             git add CONNECTION.md && git commit -m "chore: connection [skip ci]" || true && git push
           fi
 
-      # ── Verify ───────────────────────────────────────────
       - name: Verify
         run: |
           echo "=== Status ==="
@@ -209,10 +111,7 @@ jobs:
           echo "Model: deepseek-v4-pro-nothinking"
           echo "Flow: Telegram -> Hermes -> Claude Code -> ds2api -> DeepSeek"
 
-      # ── Keep Alive ───────────────────────────────────────
       - name: Keep Alive
-        env:
-          DS2API_KEY: ${{ secrets.DS2API_KEY }}
         run: |
           while true; do
             TS=$(date '+%Y-%m-%d %H:%M:%S')
@@ -223,7 +122,7 @@ jobs:
             kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null || {
               echo "[$TS] gateway down, restarting..."
               source ~/.bashrc
-              export OPENAI_API_KEY=$DS2API_KEY
+              export OPENAI_API_KEY=sk-phantom
               export OPENAI_API_BASE=http://localhost:5001/v1
               nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
             }
