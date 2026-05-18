@@ -49,15 +49,29 @@ jobs:
                   'gpt-4o': 'deepseek-v4-pro-nothinking',
                   'gpt-4o-mini': 'deepseek-v4-flash'
               },
+              'auto_delete': {'mode': 'none'},
               'runtime': {
-                  'account_max_inflight': 2,
-                  'token_refresh_interval_hours': 6
+                  'account_max_inflight': 1,
+                  'account_max_queue': 1,
+                  'global_max_inflight': 1,
+                  'token_refresh_interval_hours': 12
               }
           }
           with open('ds2api/config.json', 'w') as f:
               json.dump(config, f, indent=2)
           print('ds2api configured')
           "
+
+      - name: Network diagnostics
+        run: |
+          echo "=== Can reach DeepSeek? ==="
+          curl -s -o /dev/null -w "HTTP %{http_code} from chat.deepseek.com\n" https://chat.deepseek.com/ || echo "FAIL"
+          echo "=== DNS ==="
+          nslookup chat.deepseek.com 2>/dev/null | head -5 || echo "nslookup not available"
+          echo "=== IP ==="
+          curl -s ifconfig.me 2>/dev/null && echo ""
+          echo "=== ds2api version ==="
+          ./ds2api/ds2api --version 2>/dev/null || ./ds2api/ds2api -v 2>/dev/null || echo "no version flag"
 
       - name: Start ds2api
         run: |
@@ -74,16 +88,16 @@ jobs:
         if: always()
         run: |
           echo "=== ds2api healthz ==="
-          curl -s http://localhost:5001/healthz || echo "FAIL"
+          curl -s http://localhost:5001/healthz 2>/dev/null || echo "FAIL"
           echo ""
           echo "=== ds2api readyz ==="
-          curl -s http://localhost:5001/readyz || echo "FAIL"
+          curl -s http://localhost:5001/readyz 2>/dev/null || echo "FAIL"
           echo ""
-          echo "=== ds2api log ==="
-          cat ds2api.log
+          echo "=== ds2api log (last 30 lines) ==="
+          tail -30 ds2api.log 2>/dev/null || echo "no log"
           echo ""
           echo "=== ds2api config ==="
-          cat ds2api/config.json
+          cat ds2api/config.json 2>/dev/null || echo "no config"
 
       - name: Test DeepSeek V4
         continue-on-error: true
@@ -104,9 +118,14 @@ jobs:
                       print('DeepSeek V4 OK:', d['choices'][0]['message']['content'][:100])
                       exit(0)
               except Exception as e:
+                  body = ''
+                  if hasattr(e, 'read'):
+                      body = e.read().decode()[:300]
                   print(f'Attempt {attempt+1}/3: {e}')
+                  if body:
+                      print(f'Response body: {body}')
                   time.sleep(5)
-          print('All attempts failed, continuing anyway...')
+          print('All attempts failed, continuing...')
           "
 
       - name: Start Telegram Bot
@@ -144,7 +163,7 @@ jobs:
           echo "=== Status ==="
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
-          echo "Flow: Telegram -> Bot -> Open Interpreter -> ds2api(:5001) -> DeepSeek V4"
+          echo "Flow: Telegram -> Bot -> ds2api(:5001) -> DeepSeek V4"
 
       - name: Keep Alive
         run: |
