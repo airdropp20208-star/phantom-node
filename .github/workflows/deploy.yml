@@ -33,14 +33,11 @@ jobs:
           tar -xzf ds2api.tar.gz && mv ds2api_v4.6.1_linux_amd64 ds2api && chmod +x ds2api/ds2api && rm ds2api.tar.gz
           echo "ds2api OK"
 
-      - name: Install 9router
-        run: npm install -g 9router && echo "9router OK"
-
-      - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code && echo "claude OK"
-
       - name: Install Open Interpreter
         run: pip install open-interpreter && echo "interpreter OK"
+
+      - name: Install Hermes
+        run: pip install hermes-agent && echo "hermes OK"
 
       - name: Configure ds2api
         env:
@@ -52,24 +49,92 @@ jobs:
           printf '{"keys":["sk-phantom"],"accounts":[{"email":"%s","password":"%s"}],"model_aliases":{"gpt-4o":"deepseek-v4-flash","gpt-4o-mini":"deepseek-v4-flash","claude-sonnet-4-6":"deepseek-v4-flash","claude-opus-4-6":"deepseek-v4-pro"},"runtime":{"account_max_inflight":2,"token_refresh_interval_hours":6}}\n' "$EMAIL" "$PASS" > ds2api/config.json
           echo "ds2api configured"
 
-      - name: Configure 9router
+      - name: Configure Hermes
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
         run: |
-          mkdir -p ~/.9router
-          printf '{"port":20128,"providers":{"ds2api":{"type":"openai","base_url":"http://localhost:5001/v1","api_key":"sk-phantom"}},"routes":{"default":"ds2api","deepseek-v4-pro":"ds2api","deepseek-v4-flash":"ds2api"}}\n' > ~/.9router/config.json
-          echo "9router configured"
+          mkdir -p ~/.hermes
+          cat > ~/.hermes/.env << ENVEOF
+          OPENAI_API_KEY=sk-phantom
+          OPENAI_API_BASE=http://localhost:5001/v1
+          BOT_TOKEN=$BOT_TOKEN
+          ENVEOF
 
-      - name: Configure Claude Code
-        run: |
-          mkdir -p ~/.claude
-          cat > ~/.claude/settings.json << 'CCEOF'
-          {"permissions":{"allow":["Bash(*)","Read","Write","Edit","WebSearch","WebFetch"]}}
-          CCEOF
-          echo "claude configured"
+          cat > ~/.hermes/config.yaml << CFGEOF
+          model:
+            default: deepseek-v4-flash
+            provider: openai
+            base_url: http://localhost:5001/v1
+          providers: {}
+          fallback_providers: []
+          toolsets:
+          - hermes-cli
+          agent:
+            max_turns: 90
+            gateway_timeout: 1800
+            api_max_retries: 3
+            tool_use_enforcement: auto
+            disabled_toolsets: []
+          terminal:
+            backend: local
+            timeout: 300
+            persistent_shell: true
+          display:
+            personality: kawaii
+            language: vi
+          security:
+            allow_private_urls: true
+            redact_secrets: true
+            allow_lazy_installs: true
+          memory:
+            memory_enabled: true
+            user_profile_enabled: true
+          context:
+            engine: compressor
+          compression:
+            enabled: true
+          telegram:
+            bot_token: $BOT_TOKEN
+            allowed_chats: '*'
+            reactions: false
+            channel_prompts: {}
+          platform_toolsets:
+            cli:
+            - browser
+            - clarify
+            - code_execution
+            - cronjob
+            - delegation
+            - file
+            - memory
+            - session_search
+            - skills
+            - terminal
+            - todo
+            - vision
+            - web
+            telegram:
+            - browser
+            - clarify
+            - code_execution
+            - cronjob
+            - delegation
+            - file
+            - memory
+            - session_search
+            - skills
+            - terminal
+            - todo
+            - vision
+            - web
+          _config_version: 23
+          CFGEOF
+          echo "hermes configured"
 
       - name: Configure Open Interpreter
         run: |
           mkdir -p ~/.open-interpreter
-          echo "open-interpreter configured"
+          echo "interpreter configured"
 
       - name: Start ds2api
         run: |
@@ -77,24 +142,12 @@ jobs:
           sleep 5
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api running" || echo "ds2api starting..."
 
-      - name: Start 9router
+      - name: Start Hermes Gateway
         run: |
-          nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid
+          source ~/.bashrc
+          nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
           sleep 10
-          if ss -tlnp | grep -q ':20128'; then echo "9router running"; else echo "9router starting..."; fi
-
-      - name: Start Telegram Bot
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          ALLOWED_USERS: "7563947218"
-          ANTHROPIC_BASE_URL: "http://localhost:20128/v1"
-          ANTHROPIC_API_KEY: "sk-phantom"
-          OPENAI_API_BASE: "http://localhost:20128/v1"
-          OPENAI_API_KEY: "sk-phantom"
-        run: |
-          nohup python3 telegram-bot.py > telegram-bot.log 2>&1 & echo $! > telegram-bot.pid
-          sleep 5
-          kill -0 $(cat telegram-bot.pid) 2>/dev/null && echo "telegram bot running" || echo "telegram bot starting..."
+          kill -0 $(cat hermes-gateway.pid) 2>/dev/null && echo "gateway running" || echo "gateway starting..."
 
       - name: Setup SSH
         run: |
@@ -123,11 +176,10 @@ jobs:
         run: |
           echo "=== Status ==="
           curl -s http://localhost:5001/healthz > /dev/null && echo "ds2api: OK" || echo "ds2api: FAIL"
-          ss -tlnp | grep -q ':20128' && echo "9router: OK" || echo "9router: FAIL"
-          command -v claude > /dev/null && echo "claude: OK" || echo "claude: FAIL"
+          command -v hermes > /dev/null && echo "hermes: OK" || echo "hermes: FAIL"
           command -v interpreter > /dev/null && echo "interpreter: OK" || echo "interpreter: FAIL"
-          kill -0 $(cat telegram-bot.pid 2>/dev/null) 2>/dev/null && echo "telegram-bot: OK" || echo "telegram-bot: FAIL"
-          echo "Flow: Telegram -> DeepSeek V4 (free) -> Run code"
+          kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null && echo "gateway: OK" || echo "gateway: FAIL"
+          echo "Flow: Telegram -> Hermes -> DeepSeek V4 -> Open Interpreter"
 
       - name: Keep Alive
         run: |
@@ -137,13 +189,9 @@ jobs:
               echo "[$TIMESTAMP] ds2api down, restarting..."
               cd ds2api && nohup ./ds2api > ../ds2api.log 2>&1 & echo $! > ../ds2api.pid && cd ..
             fi
-            if ! ss -tlnp | grep -q ':20128'; then
-              echo "[$TIMESTAMP] 9router down, restarting..."
-              nohup 9router > 9router.log 2>&1 & echo $! > 9router.pid
-            fi
-            if ! kill -0 $(cat telegram-bot.pid 2>/dev/null) 2>/dev/null; then
-              echo "[$TIMESTAMP] telegram bot down, restarting..."
-              nohup python3 telegram-bot.py > telegram-bot.log 2>&1 & echo $! > telegram-bot.pid
+            if ! kill -0 $(cat hermes-gateway.pid 2>/dev/null) 2>/dev/null; then
+              echo "[$TIMESTAMP] gateway down, restarting..."
+              nohup hermes gateway > hermes-gateway.log 2>&1 & echo $! > hermes-gateway.pid
             fi
             if ! kill -0 $(cat tunnel.pid 2>/dev/null) 2>/dev/null; then
               echo "[$TIMESTAMP] tunnel down, restarting..."
