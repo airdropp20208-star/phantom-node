@@ -5,8 +5,8 @@ PhantomBot v8 - AI Agent with full MCP toolchain
 import os, json, logging, time, subprocess, urllib.request, urllib.error, urllib.parse, hashlib, re
 from datetime import datetime
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-API_KEY = os.environ.get("API_KEY", "")
+BOT_TOKEN=os.environ.get("BOT_TOKEN", "")
+API_KEY=os.environ.get("API_KEY", "")
 API_BASE = os.environ.get("API_BASE", "https://api.xiaomimimo.com/v1")
 MODEL = os.environ.get("MODEL", "mimo-v2.5")
 ALLOWED_CHATS = os.environ.get("ALLOWED_CHATS", "")
@@ -31,6 +31,16 @@ def run(cmd, timeout=60):
         return "Timeout"
     except Exception as e:
         return str(e)[:200]
+
+
+def safe_path(user_input):
+    """Sanitize file path to prevent shell injection"""
+    p = user_input.strip().strip("'\"")
+    if not p.startswith("/"):
+        p = f"/tmp/{p}"
+    if any(c in p for c in [";", "|", "&", "$", "`", "(", ")", "{", "}"]):
+        return None
+    return p
 
 
 def ai_chat(messages, max_tokens=800, temperature=0.3):
@@ -104,19 +114,19 @@ def convert_file(file_path, target_fmt):
     ext = os.path.splitext(file_path)[1].lower()
     out = f"/tmp/converted_{int(time.time())}{target_fmt}"
     converters = {
-        (".pdf", ".md"): f"markitdown {file_path} > {out}",
-        (".docx", ".md"): f"markitdown {file_path} > {out}",
-        (".pptx", ".md"): f"markitdown {file_path} > {out}",
-        (".xlsx", ".md"): f"markitdown {file_path} > {out}",
-        (".mp4", ".mp3"): f"ffmpeg -i {file_path} -q:a 0 -map a {out} -y",
-        (".mp4", ".gif"): f"ffmpeg -i {file_path} -vf fps=10,scale=480:-1 {out} -y",
-        (".png", ".jpg"): f"convert {file_path} {out}",
-        (".jpg", ".png"): f"convert {file_path} {out}",
+        (".pdf", ".md"): f"markitdown \"{file_path}\" -o \"{out}\"",
+        (".docx", ".md"): f"markitdown \"{file_path}\" -o \"{out}\"",
+        (".pptx", ".md"): f"markitdown \"{file_path}\" -o \"{out}\"",
+        (".xlsx", ".md"): f"markitdown \"{file_path}\" -o \"{out}\"",
+        (".mp4", ".mp3"): f"ffmpeg -i \"{file_path}\" -q:a 0 -map a \"{out}\" -y",
+        (".mp4", ".gif"): f"ffmpeg -i \"{file_path}\" -vf fps=10,scale=480:-1 \"{out}\" -y",
+        (".png", ".jpg"): f"convert \"{file_path}\" \"{out}\"",
+        (".jpg", ".png"): f"convert \"{file_path}\" \"{out}\"",
     }
     cmd = converters.get((ext, target_fmt))
     if not cmd: return None
     run(cmd, timeout=120)
-    return out if os.path.exists(out) else f"Convert failed"
+    return out if os.path.exists(out) else "Convert failed"
 
 
 def tg(method, data=None, timeout=10):
@@ -191,7 +201,9 @@ def handle_search(chat_id, text):
 def handle_convert(chat_id, text):
     parts = text.split()
     if len(parts) < 3: return send(chat_id, "Usage: /convert <file> <format>\nExample: /convert /tmp/doc.pdf .md")
-    fpath, fmt = parts[1], parts[2]
+    fpath = safe_path(parts[1])
+    fmt = parts[2]
+    if not fpath: return send(chat_id, "Path khong hop le")
     if not os.path.exists(fpath): return send(chat_id, f"Khong tim thay: {fpath}")
     send(chat_id, "Dang convert...")
     result = convert_file(fpath, fmt)
@@ -221,6 +233,7 @@ def handle_mcp(chat_id):
         "Filesystem MCP": "npm list -g @modelcontextprotocol/server-filesystem",
         "GitHub MCP": "npm list -g @modelcontextprotocol/server-github",
         "Supabase MCP": "npm list -g @supabase/mcp-server-supabase",
+        "Sequential Thinking": "npm list -g @anthropic-ai/mcp-sequential-thinking",
     }
     tools = []
     for name, cmd in checks.items():
@@ -255,11 +268,13 @@ def handle_ppt(chat_id, text):
     if len(parts) < 2:
         return send(chat_id, "Usage: /ppt <text or file_path>\nExample: /ppt /tmp/doc.pdf")
     arg = parts[1].strip()
-    if os.path.exists(arg):
+    fpath = safe_path(arg)
+    if fpath and os.path.exists(fpath):
         send(chat_id, "Dang tao PPT tu file...")
-        content = run(f"cat {arg} 2>/dev/null | head -300")
-        if arg.endswith(".pdf"):
-            content = run(f"markitdown {arg} 2>/dev/null | head -300")
+        if fpath.endswith(".pdf"):
+            content = run(f"markitdown \"{fpath}\" 2>/dev/null | head -300")
+        else:
+            content = run(f"head -300 \"{fpath}\" 2>/dev/null")
     else:
         send(chat_id, "Dang tao PPT...")
         content = arg
@@ -290,17 +305,20 @@ Requirements:
 def handle_analyze(chat_id, text):
     parts = text.split()
     if len(parts) < 2: return send(chat_id, "Usage: /analyze <file_path>")
-    fpath = parts[1]
+    fpath = safe_path(parts[1])
+    if not fpath: return send(chat_id, "Path khong hop le")
     if not os.path.exists(fpath): return send(chat_id, f"Khong tim thay: {fpath}")
     send(chat_id, "Dang phan tich...")
     ext = os.path.splitext(fpath)[1].lower()
     if ext in [".pdf", ".docx", ".pptx", ".xlsx", ".md", ".txt"]:
-        content = run(f"cat {fpath} 2>/dev/null | head -200")
-        if ext == ".pdf": content = run(f"markitdown {fpath} 2>/dev/null | head -200")
+        if ext == ".pdf":
+            content = run(f"markitdown \"{fpath}\" 2>/dev/null | head -200")
+        else:
+            content = run(f"head -200 \"{fpath}\" 2>/dev/null")
     elif ext in [".png", ".jpg", ".jpeg", ".gif"]:
         content = f"Image file: {ext}, size: {os.path.getsize(fpath)} bytes"
     else:
-        content = run(f"file {fpath} && head -100 {fpath}")
+        content = run(f"file \"{fpath}\" && head -100 \"{fpath}\"")
     summary = ai_chat([{"role": "system", "content": "Analyze this file content concisely."},
                        {"role": "user", "content": content}], max_tokens=600)
     send(chat_id, summary)

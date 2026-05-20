@@ -23,7 +23,7 @@ jobs:
 
       - name: Install Python packages
         run: |
-          pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic playwright cloakbrowser ui-tars
+          pip install "markitdown[all]" python-pptx openpyxl python-docx pymupdf anthropic playwright cloakbrowser ui-tars
           playwright install chromium --with-deps 2>/dev/null || true
 
       - name: Clone & install PPT Master
@@ -38,7 +38,8 @@ jobs:
             @modelcontextprotocol/server-github \
             @supabase/mcp-server-supabase \
             @upstash/context7-mcp \
-            @colbymchenry/codegraph
+            @colbymchenry/codegraph \
+            @anthropic-ai/mcp-sequential-thinking
 
       - name: Init CodeGraph
         run: codegraph init -i --yes 2>/dev/null || true
@@ -85,7 +86,7 @@ jobs:
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
           echo "=== MCP Tools ==="
-          npm list -g --depth=0 2>/dev/null | grep -E "server-|context7|mcp-|playwright|codegraph|supabase"
+          npm list -g --depth=0 2>/dev/null | grep -E "server-|context7|mcp-|codegraph|supabase"
           echo "=== CodeGraph ==="
           which codegraph 2>/dev/null && echo "OK" || echo "not found"
           echo "=== MarkItDown ==="
