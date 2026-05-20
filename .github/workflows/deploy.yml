@@ -23,7 +23,7 @@ jobs:
 
       - name: Install Python packages
         run: |
-          pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic browserbase playwright cloakbrowser ui-tars
+          pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic playwright cloakbrowser ui-tars
           playwright install chromium --with-deps 2>/dev/null || true
 
       - name: Clone & install PPT Master
@@ -34,13 +34,10 @@ jobs:
       - name: Install Node.js MCP + tools
         run: |
           npm install -g \
-            @anthropic-ai/mcp-filesystem \
-            @anthropic-ai/mcp-github \
-            @anthropic-ai/mcp-supabase \
-            @anthropic-ai/mcp-sequential-thinking \
-            @anthropic-ai/mcp-playwright \
-            @anthropic-ai/mcp-browserbase \
-            @context7/mcp-server \
+            @modelcontextprotocol/server-filesystem \
+            @modelcontextprotocol/server-github \
+            @supabase/mcp-server-supabase \
+            @upstash/context7-mcp \
             @colbymchenry/codegraph
 
       - name: Init CodeGraph
@@ -88,7 +85,7 @@ jobs:
           echo "=== Bot ==="
           kill -0 $(cat bot.pid 2>/dev/null) 2>/dev/null && echo "bot: OK" || echo "bot: FAIL"
           echo "=== MCP Tools ==="
-          npm list -g --depth=0 2>/dev/null | grep mcp
+          npm list -g --depth=0 2>/dev/null | grep -E "server-|context7|mcp-|playwright|codegraph|supabase"
           echo "=== CodeGraph ==="
           which codegraph 2>/dev/null && echo "OK" || echo "not found"
           echo "=== MarkItDown ==="
@@ -98,7 +95,7 @@ jobs:
           echo "=== OpenCut ==="
           ls /tmp/opencut/README.md 2>/dev/null && echo "OK" || echo "not cloned"
           echo "=== Playwright ==="
-          which playwright 2>/dev/null && echo "OK" || echo "not found"
+          python3 -c "import playwright; print('OK')" 2>/dev/null || echo "not found"
 
       - name: Keep Alive
         run: |

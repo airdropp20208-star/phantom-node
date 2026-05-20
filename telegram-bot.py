@@ -216,25 +216,23 @@ def handle_mcp(chat_id):
     checks = {
         "CodeGraph": "which codegraph",
         "MarkItDown": "which markitdown",
-        "Playwright": "which playwright",
-        "Context7": "npm list -g @context7/mcp-server",
-        "Filesystem MCP": "npm list -g @anthropic-ai/mcp-filesystem",
-        "GitHub MCP": "npm list -g @anthropic-ai/mcp-github",
-        "Sequential Thinking": "npm list -g @anthropic-ai/mcp-sequential-thinking",
-        "Supabase MCP": "npm list -g @anthropic-ai/mcp-supabase",
-        "Browserbase MCP": "npm list -g @anthropic-ai/mcp-browserbase",
-        "Playwright MCP": "npm list -g @anthropic-ai/mcp-playwright",
+        "Playwright": "python3 -c 'import playwright'",
+        "Context7": "npm list -g @upstash/context7-mcp",
+        "Filesystem MCP": "npm list -g @modelcontextprotocol/server-filesystem",
+        "GitHub MCP": "npm list -g @modelcontextprotocol/server-github",
+        "Supabase MCP": "npm list -g @supabase/mcp-server-supabase",
     }
     tools = []
     for name, cmd in checks.items():
         result = run(cmd)
         status = "✅" if "empty" not in result.lower() and "ERR" not in result else "❌"
         tools.append(f"{status} {name}")
-    send(chat_id, f"🛠 MCP Tools:\n\n" + "\n".join(tools) +
+    send(chat_id, "🛠 MCP Tools:\n\n" + "\n".join(tools) +
          "\n\n📊 CodeGraph: semantic code graph (94% fewer calls)\n"
-         "🌐 Browserbase: cloud headless browser 24/7\n"
+         "🌐 Playwright: headless browser automation\n"
          "🎬 OpenCut: open source video editor\n"
-         "🧠 Computer Use: Anthropic built-in")
+         "🧠 Computer Use: Anthropic built-in\n"
+         "📑 PPT Master: AI creates PPTX from documents")
 
 
 def handle_memory(chat_id, text, action):
