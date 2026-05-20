@@ -252,6 +252,43 @@ def handle_memory(chat_id, text, action):
         send(chat_id, out[:4000])
 
 
+def handle_ppt(chat_id, text):
+    parts = text.split(maxsplit=1)
+    if len(parts) < 2:
+        return send(chat_id, "Usage: /ppt <text or file_path>\nExample: /ppt /tmp/doc.pdf")
+    arg = parts[1].strip()
+    if os.path.exists(arg):
+        send(chat_id, "Dang tao PPT tu file...")
+        content = run(f"cat {arg} 2>/dev/null | head -300")
+        if arg.endswith(".pdf"):
+            content = run(f"markitdown {arg} 2>/dev/null | head -300")
+    else:
+        send(chat_id, "Dang tao PPT...")
+        content = arg
+
+    prompt = f"""Create a professional PowerPoint presentation from this content.
+Return ONLY the python-pptx code to generate the PPT.
+Content: {content[:3000]}
+
+Requirements:
+- Title slide
+- Content slides with bullet points
+- Professional styling
+- Save to /tmp/presentation.pptx"""
+    code = ai_chat([{"role": "system", "content": "Return only executable python-pptx code, no explanation."},
+                    {"role": "user", "content": prompt}], max_tokens=2000)
+    for sep in ["```python", "```"]:
+        if sep in code:
+            code = code.split(sep)[1].split("```")[0].strip()
+    with open("/tmp/gen_ppt.py", "w") as f:
+        f.write(code)
+    output = run("python3 /tmp/gen_ppt.py", timeout=60)
+    if os.path.exists("/tmp/presentation.pptx"):
+        tg_upload("/tmp/presentation.pptx", chat_id, "PPT da tao xong!")
+    else:
+        send(chat_id, f"Loi tao PPT:\n{output[:500]}")
+
+
 def handle_analyze(chat_id, text):
     parts = text.split()
     if len(parts) < 2: return send(chat_id, "Usage: /analyze <file_path>")
@@ -327,6 +364,7 @@ def main():
                          "/convert <file> <fmt> — Convert file (pdf→md, mp4→mp3...)\n"
                          "/browse <url> — Doc va tong hop trang web\n"
                          "/analyze <file> — Phan tich file\n"
+                         "/ppt <text/file> — Tao PPT tu text/file\n"
                          "/mcp — Danh sach MCP tools\n"
                          "/remember <text> — Luu memory\n"
                          "/recall — Xem memory\n"
@@ -353,6 +391,7 @@ def main():
                 if lower.startswith("/remember"): handle_memory(chat_id, text, "remember"); continue
                 if lower == "/recall": handle_memory(chat_id, text, "recall"); continue
                 if lower.startswith("/analyze"): handle_analyze(chat_id, text); continue
+                if lower.startswith("/ppt"): handle_ppt(chat_id, text); continue
 
                 # === Smart Execution ===
                 task_kw = ["convert", "chuyen", "nen", "compress", "extract", "resize", "crop", "rotate",

@@ -26,6 +26,11 @@ jobs:
           pip install requests markitdown python-pptx openpyxl python-docx pymupdf anthropic browserbase playwright
           playwright install chromium --with-deps 2>/dev/null || true
 
+      - name: Clone & install PPT Master
+        run: |
+          git clone https://github.com/hugohe3/ppt-master.git /tmp/ppt-master 2>/dev/null || true
+          cd /tmp/ppt-master && pip install -r requirements.txt 2>/dev/null || true
+
       - name: Install Node.js MCP + tools
         run: |
           npm install -g \
@@ -88,6 +93,8 @@ jobs:
           which codegraph 2>/dev/null && echo "OK" || echo "not found"
           echo "=== MarkItDown ==="
           which markitdown 2>/dev/null && echo "OK" || echo "not found"
+          echo "=== PPT Master ==="
+          ls /tmp/ppt-master/README.md 2>/dev/null && echo "OK" || echo "not cloned"
           echo "=== OpenCut ==="
           ls /tmp/opencut/README.md 2>/dev/null && echo "OK" || echo "not cloned"
           echo "=== Playwright ==="
